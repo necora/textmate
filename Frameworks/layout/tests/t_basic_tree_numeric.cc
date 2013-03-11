@@ -4,7 +4,7 @@
 class NumericTreeTests : public CxxTest::TestSuite
 {
 	static int numeric_comp (ssize_t key, ssize_t const& offset, ssize_t const& node) { return key < node ? -1 : (key == node ? 0 : +1); }
-	static std::string numeric_to_s (ssize_t const& offset, ssize_t const& node)      { return text::format("%zd", node); }
+	static std::string numeric_to_s (ssize_t const& offset, ssize_t const& node)      { return std::to_string(node); }
 	static bool numeric_bin_comp (oak::basic_tree_t<ssize_t>::value_type const& node, ssize_t key) { return node.key == key; }
 	static bool numeric_bin_comp_2 (oak::basic_tree_t<ssize_t>::value_type const& lhs, oak::basic_tree_t<ssize_t>::value_type const& rhs) { return lhs.key == rhs.key; }
 
@@ -21,7 +21,7 @@ public:
 			tmp.insert((random() & 0xFFFFFF) - 0x7FFFFF);
 
 		keys.insert(keys.end(), tmp.begin(), tmp.end());
-		std::random_shuffle(beginof(keys), endof(keys));
+		std::random_shuffle(keys.begin(), keys.end());
 		iterate(key, keys)
 			tree.insert(tree.lower_bound(*key, &numeric_comp), *key);
 	}

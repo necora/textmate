@@ -21,7 +21,10 @@ namespace path
 
 	PUBLIC std::string join (std::string const& base, std::string const& path); // this will normalize the (resulting) path
 
+	PUBLIC std::string join (std::initializer_list<std::string> const& components);
+
 	PUBLIC bool is_absolute (std::string const& path);
+	PUBLIC bool is_child (std::string const& nonNormalizedChild, std::string const& nonNormalizedParent);
 	PUBLIC std::string with_tilde (std::string const& path);        // /Users/me/foo.html.erb → ~/foo.html.erb
 	PUBLIC std::string relative_to (std::string const& path, std::string const& base); // /Users/me/foo.html.erb (arg: ~/Desktop) → ../foo.html.erb
 
@@ -37,7 +40,7 @@ namespace path
 		bool operator< (identifier_t const& rhs) const;
 		bool operator== (identifier_t const& rhs) const;
 		bool operator!= (identifier_t const& rhs) const;
-		EXPLICIT operator bool () const { return exists || path != NULL_STR; }
+		explicit operator bool () const { return exists || path != NULL_STR; }
 	private:
 		bool exists;
 		dev_t device;
@@ -87,10 +90,10 @@ namespace path
 	// ===========
 
 	struct walker_t;
-	typedef std::tr1::shared_ptr<walker_t>       walker_ptr;
-	typedef std::tr1::shared_ptr<walker_t const> walker_const_ptr;
+	typedef std::shared_ptr<walker_t>       walker_ptr;
+	typedef std::shared_ptr<walker_t const> walker_const_ptr;
 
-	struct PUBLIC walker_t : std::tr1::enable_shared_from_this<walker_t>
+	struct PUBLIC walker_t : std::enable_shared_from_this<walker_t>
 	{
 		struct iterator_t
 		{
@@ -161,6 +164,7 @@ namespace path
 	PUBLIC std::string home ();
 	PUBLIC std::string trash (std::string const& forPath);
 	PUBLIC std::string temp (std::string const& file = NULL_STR);
+	PUBLIC std::string cache (std::string const& file = NULL_STR);
 	PUBLIC std::string desktop ();
 
 } /* path */ 

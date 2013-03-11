@@ -7,24 +7,13 @@
 
 static class WebServerFixture : public CxxTest::GlobalFixture
 {
-	static void* main (void* arg)
-	{
-		web::run_server(path::join(__FILE__, ".."));
-		return NULL;
-	}
-
-	pthread_t _thread;
-
 public:
 	bool setUpWorld()
 	{
 		if(web::setup_server(WEB_SERVER_PORT))
 		{
-			if(pthread_create(&_thread, NULL, &main, this) == 0)
-			{
-				pthread_detach(_thread);
-				return true;
-			}
+			std::thread([]{ web::run_server(path::join(__FILE__, "..")); }).detach();
+			return true;
 		}
 		return false;
 	}
@@ -86,7 +75,7 @@ public:
 			{
 				TS_ASSERT_EQUALS(status, "HTTP/1.0 200 OK");
 				TS_ASSERT(headers.find("content-length") != headers.end());
-				TS_ASSERT_EQUALS(headers.find("content-length")->second, text::format("%zu", fileSize));
+				TS_ASSERT_EQUALS(headers.find("content-length")->second, std::to_string(fileSize));
 				TS_ASSERT_EQUALS(body, std::string(fileContent, fileContent + fileSize));
 			}
 			close(fd);

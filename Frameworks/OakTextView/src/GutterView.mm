@@ -1,11 +1,11 @@
 #import "GutterView.h"
 #import <OakAppKit/OakAppKit.h>
 #import <OakAppKit/NSImage Additions.h>
+#import <OakAppKit/NSColor Additions.h>
 #import <OakFoundation/NSString Additions.h>
-#import <ns/attr_string.h>
 #import <text/types.h>
+#import <cf/cf.h>
 #import <cf/cgrect.h>
-#import <oak/CocoaSTL.h>
 #import <oak/debug.h>
 #import <oak/oak.h>
 
@@ -21,27 +21,31 @@ struct data_source_t
 	data_source_t (std::string const& identifier, id datasource, id delegate) : identifier(identifier), datasource(datasource), delegate(delegate) { }
 
 	std::string identifier;
-	id datasource;
-	id delegate;
+	__weak id datasource;
+	__weak id delegate;
 	CGFloat x0;
 	CGFloat width;
 };
 
 @interface GutterView ()
-- (void)frameDidChange:(NSNotification*)aNotification;
-- (void)updateWidthWithAnimation:(BOOL)animate;
-- (void)setGutterWidth:(CGFloat)newWidth animate:(BOOL)animate;
+@property (nonatomic) NSSize size;
 - (CGFloat)widthForColumnWithIdentifier:(std::string const&)identifier;
+- (data_source_t*)columnWithIdentifier:(std::string const&)identifier;
 
 - (void)clearTrackingRects;
 - (void)setupTrackingRects;
-
-- (data_source_t*)columnWithIdentifier:(std::string const&)identifier;
 @end
 
 @implementation GutterView
-@synthesize partnerView, lineNumberFont, delegate;
-@synthesize foregroundColor, backgroundColor, iconColor, selectionForegroundColor, selectionBackgroundColor, selectionIconColor, selectionBorderColor;
+{
+	std::vector<data_source_t> columnDataSources;
+	NSMutableSet* hiddenColumns;
+	std::string highlightedRange;
+	std::vector<CGRect> backgroundRects, borderRects;
+
+	NSPoint mouseDownAtPoint;
+	NSPoint mouseHoveringAtPoint;
+}
 
 // ==================
 // = Setup/Teardown =
@@ -70,11 +74,6 @@ struct data_source_t
 	[self setupTrackingRects];
 }
 
-- (void)viewDidMoveToSuperview
-{
-	[self frameDidChange:nil];
-}
-
 - (void)removeFromSuperview
 {
 	D(DBF_GutterView, bug("\n"););
@@ -96,23 +95,12 @@ struct data_source_t
 - (void)dealloc
 {
 	D(DBF_GutterView, bug("\n"););
-	self.partnerView              = nil;
-	self.lineNumberFont           = nil;
-	self.foregroundColor          = nil;
-	self.backgroundColor          = nil;
-	self.iconColor                = nil;
-	self.selectionForegroundColor = nil;
-	self.selectionBackgroundColor = nil;
-	self.selectionIconColor       = nil;
-	self.selectionBorderColor     = nil;
 	iterate(it, columnDataSources)
 	{
 		if(it->datasource)
 			[[NSNotificationCenter defaultCenter] removeObserver:self name:GVColumnDataSourceDidChange object:it->datasource];
 	}
-	[hiddenColumns release];
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
-	[super dealloc];
 }
 
 - (void)setupSelectionRects
@@ -123,8 +111,8 @@ struct data_source_t
 	citerate(range, text::selection_t(highlightedRange))
 	{
 		auto from = range->min(), to = range->max();
-		CGFloat firstY = [delegate lineFragmentForLine:from.line column:from.column].firstY;
-		auto fragment = [delegate lineFragmentForLine:to.line column:to.column];
+		CGFloat firstY = [self.delegate lineFragmentForLine:from.line column:from.column].firstY;
+		auto fragment = [self.delegate lineFragmentForLine:to.line column:to.column];
 		CGFloat lastY = to.column == 0 && from.line != to.line ? fragment.firstY : fragment.lastY;
 
 		backgroundRects.push_back(CGRectMake(0, firstY+1, self.frame.size.width, lastY - firstY - 2));
@@ -154,37 +142,14 @@ struct data_source_t
 		[self setNeedsDisplayInRect:*rect];
 }
 
-- (void)setLineNumberFont:(NSFont*)font
-{
-	if(font && font != self.lineNumberFont)
-	{
-		[lineNumberFont release];
-		lineNumberFont = [font retain];
-		[self frameDidChange:nil];
-	}
-}
-
 - (void)setPartnerView:(NSView*)aView
 {
 	D(DBF_GutterView, bug("%s (%p)\n", [[[aView class] description] UTF8String], aView););
 
-	if(partnerView)
-	{
+	if(_partnerView)
 		[[NSNotificationCenter defaultCenter] removeObserver:self];
-		[partnerView release];
-	}
-
-	if(partnerView = [aView retain])
-	{
-		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(frameDidChange:) name:NSViewFrameDidChangeNotification object:partnerView];
-		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(boundsDidChange:) name:NSViewBoundsDidChangeNotification object:[[partnerView enclosingScrollView] contentView]];
-		[self frameDidChange:nil];
-	}
-}
-
-- (void)setDelegate:(id <GutterViewDelegate>)aDelegate
-{
-	delegate = aDelegate;
+	if(_partnerView = aView)
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(boundsDidChange:) name:NSViewBoundsDidChangeNotification object:[[_partnerView enclosingScrollView] contentView]];
 }
 
 - (void)insertColumnWithIdentifier:(NSString*)columnIdentifier atPosition:(NSUInteger)index dataSource:(id <GutterViewColumnDataSource>)columnDataSource delegate:(id <GutterViewColumnDelegate>)columnDelegate
@@ -206,23 +171,6 @@ struct data_source_t
 	return YES;
 }
 
-- (void)setGutterWidth:(CGFloat)newWidth animate:(BOOL)animate
-{
-	NSRect frame = self.frame;
-	CGFloat widthDifference = newWidth - frame.size.width;
-	frame.size.width = newWidth;
-	[(animate ? self.animator : self) setFrame:frame];
-
-	frame = self.enclosingScrollView.frame;
-	frame.size.width += widthDifference;
-	[(animate ? self.enclosingScrollView.animator : self.enclosingScrollView) setFrame:frame];
-
-	frame = partnerView.enclosingScrollView.frame;
-	frame.size.width -= widthDifference;
-	frame.origin.x   += widthDifference;
-	[(animate ? partnerView.enclosingScrollView.animator : partnerView.enclosingScrollView) setFrame:frame];
-}
-
 - (BOOL)visibilityForColumnWithIdentifier:(NSString*)identifier
 {
 	return ![hiddenColumns containsObject:identifier];
@@ -231,10 +179,12 @@ struct data_source_t
 - (CGFloat)widthForColumnWithIdentifier:(std::string const&)identifier
 {
 	CGFloat width = 0;
+	if(!self.delegate)
+		return 5;
 
 	if(identifier == [GVLineNumbersColumnIdentifier UTF8String])
 	{
-		NSUInteger lastLineNumber = [delegate lineRecordForPosition:NSHeight([partnerView frame])].lineNumber;
+		NSUInteger lastLineNumber = [self.delegate lineRecordForPosition:NSHeight([_partnerView frame])].lineNumber;
 		CGFloat newWidth = WidthOfLineNumbers(lastLineNumber == NSNotFound ? 0 : lastLineNumber + 1, self.lineNumberFont);
 
 		width = [self columnWithIdentifier:identifier]->width;
@@ -299,24 +249,50 @@ struct data_source_t
 
 - (void)boundsDidChange:(NSNotification*)aNotification
 {
-	[self.enclosingScrollView.contentView scrollToPoint:NSMakePoint(0, NSMinY(partnerView.enclosingScrollView.contentView.bounds))];
+	[self updateSize];
+	[self.enclosingScrollView.contentView scrollToPoint:NSMakePoint(0, NSMinY(_partnerView.enclosingScrollView.contentView.bounds))];
 }
 
-- (void)frameDidChange:(NSNotification*)aNotification
+- (void)setSize:(NSSize)newSize
 {
-	[self setFrameSize:NSMakeSize(NSWidth(self.enclosingScrollView.documentVisibleRect), NSHeight(partnerView.frame) + NSHeight([self.enclosingScrollView documentVisibleRect]) - NSHeight([partnerView.enclosingScrollView documentVisibleRect]))];
-	[self.enclosingScrollView.contentView scrollToPoint:NSMakePoint(0, NSMinY(partnerView.enclosingScrollView.contentView.bounds))];
-	[self updateWidthWithAnimation:NO];
+	if(NSEqualSizes(_size, newSize))
+		return;
+	_size = newSize;
+	[self invalidateIntrinsicContentSize];
 }
 
-static CTLineRef CTCreateLineFromText (std::string const& text, NSFont* font, NSColor* color = nil)
+static CTLineRef CreateCTLineFromText (std::string const& text, NSFont* font, NSColor* color = nil)
 {
-	return CTLineCreateWithAttributedString(ns::attr_string_t(font) << (color ?: [NSColor grayColor]) << text);
+	CTLineRef res = NULL;
+	if(CFMutableDictionaryRef dict = CFDictionaryCreateMutable(kCFAllocatorDefault, 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks))
+	{
+		if(CGColorRef cgColor = [color tmCGColor])
+			CFDictionaryAddValue(dict, kCTForegroundColorAttributeName, cgColor);
+
+		if(CFStringRef fontName = (CFStringRef)CFBridgingRetain([font fontName]))
+		{
+			if(CTFontRef ctFont = CTFontCreateWithName(fontName, [font pointSize], NULL))
+			{
+				CFDictionaryAddValue(dict, kCTFontAttributeName, ctFont);
+				CFRelease(ctFont);
+			}
+			CFRelease(fontName);
+		}
+
+		if(CFAttributedStringRef str = CFAttributedStringCreate(kCFAllocatorDefault, cf::wrap(text), dict))
+		{
+			res = CTLineCreateWithAttributedString(str);
+			CFRelease(str);
+		}
+
+		CFRelease(dict);
+	}
+	return res;
 }
 
 static CGFloat WidthOfLineNumbers (NSUInteger lineNumber, NSFont* font)
 {
-	CTLineRef line = CTCreateLineFromText(text::format("%ld", std::max<NSUInteger>(10, lineNumber)), font);
+	CTLineRef line = CreateCTLineFromText(std::to_string(std::max<NSUInteger>(10, lineNumber)), font);
 	CGFloat width  = CTLineGetTypographicBounds(line, NULL, NULL, NULL);
 	CFRelease(line);
 	return ceil(width);
@@ -327,7 +303,7 @@ static void DrawText (std::string const& text, CGRect const& rect, CGFloat basel
 	CGContextRef context = (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
 	CGContextSaveGState(context);
 
-	CTLineRef line = CTCreateLineFromText(text, font, color);
+	CTLineRef line = CreateCTLineFromText(text, font, color);
 	CGContextSetTextMatrix(context, CGAffineTransformIdentity);
 	CGContextConcatCTM(context, CGAffineTransformMake(1, 0, 0, -1, 0, 2 * baseline));
 	CGContextSetTextPosition(context, CGRectGetMaxX(rect) - CTLineGetTypographicBounds(line, NULL, NULL, NULL), baseline);
@@ -355,8 +331,8 @@ static void DrawText (std::string const& text, CGRect const& rect, CGFloat basel
 	std::pair<NSUInteger, NSUInteger> prevLine(NSNotFound, 0);
 	for(CGFloat y = NSMinY(aRect); y < NSMaxY(aRect); )
 	{
-		GVLineRecord record = [delegate lineRecordForPosition:y];
-		if(prevLine == std::make_pair(record.lineNumber, record.softlineOffset))
+		GVLineRecord record = [self.delegate lineRecordForPosition:y];
+		if(record.lastY <= y || prevLine == std::make_pair(record.lineNumber, record.softlineOffset))
 			break;
 		prevLine = std::make_pair(record.lineNumber, record.softlineOffset);
 
@@ -370,22 +346,45 @@ static void DrawText (std::string const& text, CGRect const& rect, CGFloat basel
 			if(dataSource->identifier == GVLineNumbersColumnIdentifier.UTF8String)
 			{
 				NSColor* textColor = selectedRow ? self.selectionForegroundColor : self.foregroundColor;
-				DrawText(record.softlineOffset == 0 ? text::format("%ld", record.lineNumber + 1) : "·", columnRect, NSMinY(columnRect) + record.baseline, self.lineNumberFont, textColor);
+				DrawText(record.softlineOffset == 0 ? std::to_string(record.lineNumber + 1) : "·", columnRect, NSMinY(columnRect) + record.baseline, self.lineNumberFont, textColor);
 			}
 			else if(record.softlineOffset == 0)
 			{
 				BOOL isHoveringRect = NSMouseInRect(mouseHoveringAtPoint, columnRect, [self isFlipped]);
 				BOOL isDownInRect   = NSMouseInRect(mouseDownAtPoint,     columnRect, [self isFlipped]);
 
-				NSColor* imageColor = selectedRow ? self.selectionIconColor : self.iconColor;
+				if(selectedRow && isDownInRect)        [self.selectionIconPressedColor set];
+				else if(selectedRow && isHoveringRect) [self.selectionIconHoverColor   set];
+				else if(selectedRow)                   [self.selectionIconColor        set];
+				else if(isDownInRect)                  [self.iconPressedColor          set];
+				else if(isHoveringRect)                [self.iconHoverColor            set];
+				else                                   [self.iconColor                 set];
+
 				NSImage* image = [self imageForColumn:dataSource->identifier atLine:record.lineNumber hovering:isHoveringRect && NSEqualPoints(mouseDownAtPoint, NSMakePoint(-1, -1)) pressed:isHoveringRect && isDownInRect];
-				CGFloat y = round((NSHeight(columnRect) - [image size].height) / 2);
-				CGFloat x = round((NSWidth(columnRect) - [image size].width) / 2);
-				[image lockFocus];
-				[imageColor set];
-				NSRectFillUsingOperation(NSMakeRect(0, 0, [image size].width, [image size].height), NSCompositeSourceAtop);
-				[image unlockFocus];
-				[image drawAdjustedAtPoint:NSMakePoint(NSMinX(columnRect) + x, NSMinY(columnRect) + y) fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1.0];
+				if([image size].height > 0 && [image size].width > 0)
+				{
+					// The placement of the center of image is aligned with the center of the capHeight.
+					CGFloat center = record.baseline - ([self.lineNumberFont capHeight] / 2);
+					CGFloat x = round((NSWidth(columnRect) - [image size].width) / 2);
+					CGFloat y = round(center - ([image size].height / 2));
+					NSRect imageRect = NSMakeRect(NSMinX(columnRect) + x, NSMinY(columnRect) + y, [image size].width, [image size].height);
+
+					[NSGraphicsContext saveGraphicsState];
+
+					NSAffineTransform* transform = [NSAffineTransform transform];
+					[transform translateXBy:0 yBy:NSMaxY(imageRect)];
+					[transform scaleXBy:1 yBy:-1];
+					[transform concat];
+					imageRect.origin.y = 0;
+
+					CGImageRef cgImage = [image CGImageForProposedRect:NULL context:[NSGraphicsContext currentContext] hints:nil];
+					CGImageRef imageMask = CGImageMaskCreate(CGImageGetWidth(cgImage), CGImageGetHeight(cgImage), CGImageGetBitsPerComponent(cgImage), CGImageGetBitsPerPixel(cgImage), CGImageGetBytesPerRow(cgImage), CGImageGetDataProvider(cgImage), NULL, false);
+					CGContextClipToMask((CGContextRef)[[NSGraphicsContext currentContext] graphicsPort], imageRect, imageMask);
+					CFRelease(imageMask);
+
+					NSRectFillUsingOperation(imageRect, NSCompositeSourceOver);
+					[NSGraphicsContext restoreGraphicsState];
+				}
 			}
 		}
 
@@ -393,13 +392,8 @@ static void DrawText (std::string const& text, CGRect const& rect, CGFloat basel
 	}
 }
 
-- (void)updateWidthWithAnimation:(BOOL)animate
+- (void)updateSize
 {
-	// Don’t perform any sizing until the view is set up,
-	// to avoid the width becoming out of sync with the partnerView
-	if(!partnerView || !self.superview)
-		return;
-
 	static const CGFloat columnPadding = 1;
 
 	CGFloat currentX = 0, totalWidth = 0;
@@ -417,19 +411,27 @@ static void DrawText (std::string const& text, CGRect const& rect, CGFloat basel
 			it->width = 0;
 		}
 	}
-	[self setGutterWidth:totalWidth animate:animate];
+
+	NSPoint origin = NSMakePoint(0, NSMinY(_partnerView.enclosingScrollView.contentView.bounds));
+	CGFloat height = std::max(NSHeight(_partnerView.frame), origin.y + NSHeight([self visibleRect]));
+	[self setSize:NSMakeSize(totalWidth, height)];
+}
+
+- (NSSize)intrinsicContentSize
+{
+	return self.size;
 }
 
 - (void)reloadData:(id)sender
 {
 	D(DBF_GutterView, bug("\n"););
-	[self updateWidthWithAnimation:NO];
+	[self updateSize];
 	[self setNeedsDisplay:YES];
 }
 
 - (NSRect)columnRectForPoint:(NSPoint)aPoint
 {
-	GVLineRecord record = [delegate lineRecordForPosition:aPoint.y];
+	GVLineRecord record = [self.delegate lineRecordForPosition:aPoint.y];
 	if(record.lineNumber != NSNotFound && record.softlineOffset == 0)
 	{
 		citerate(dataSource, [self visibleColumnDataSources])
@@ -464,7 +466,7 @@ static void DrawText (std::string const& text, CGRect const& rect, CGFloat basel
 
 		if(NSEqualRects(columnRect, [self columnRectForPoint:mouseHoveringAtPoint]))
 		{
-			GVLineRecord record = [delegate lineRecordForPosition:mouseDownAtPoint.y];
+			GVLineRecord record = [self.delegate lineRecordForPosition:mouseDownAtPoint.y];
 			citerate(dataSource, [self visibleColumnDataSources])
 			{
 				NSRect columnRect = NSMakeRect(dataSource->x0, record.firstY, dataSource->width, record.lastY - record.firstY);
@@ -482,14 +484,14 @@ static void DrawText (std::string const& text, CGRect const& rect, CGFloat basel
 	}
 	else
 	{
-		[partnerView mouseDown:event];
+		[_partnerView mouseDown:event];
 		while([event type] != NSLeftMouseUp)
 		{
 			event = [NSApp nextEventMatchingMask:(NSLeftMouseUpMask|NSMouseMovedMask|NSLeftMouseDraggedMask|NSMouseEnteredMask|NSMouseExitedMask) untilDate:[NSDate distantFuture] inMode:NSEventTrackingRunLoopMode dequeue:YES];
 			if([event type] == NSMouseMoved || [event type] == NSLeftMouseDragged)
-				[partnerView mouseDragged:event];
+				[_partnerView mouseDragged:event];
 		}
-		[partnerView mouseUp:event];
+		[_partnerView mouseUp:event];
 	}
 }
 
@@ -503,7 +505,7 @@ static void DrawText (std::string const& text, CGRect const& rect, CGFloat basel
 	if(visible)
 			[hiddenColumns removeObject:columnIdentifier];
 	else	[hiddenColumns addObject:columnIdentifier];
-	[self updateWidthWithAnimation:NO];
+	[self updateSize];
 }
 
 // ==================
@@ -521,15 +523,12 @@ static void DrawText (std::string const& text, CGRect const& rect, CGFloat basel
 {
 	D(DBF_GutterView, bug("\n"););
 	[self clearTrackingRects];
-
-	NSTrackingArea* trackingArea = [[NSTrackingArea alloc] initWithRect:[self visibleRect] options:NSTrackingMouseEnteredAndExited|NSTrackingMouseMoved|NSTrackingActiveInKeyWindow owner:self userInfo:nil];
-	[self addTrackingArea:trackingArea];
-	[trackingArea release];
+	[self addTrackingArea:[[NSTrackingArea alloc] initWithRect:[self visibleRect] options:NSTrackingMouseEnteredAndExited|NSTrackingMouseMoved|NSTrackingActiveInKeyWindow owner:self userInfo:nil]];
 }
 
 - (void)scrollWheel:(NSEvent*)event
 {
-	[partnerView scrollWheel:event];
+	[_partnerView scrollWheel:event];
 	[self mouseMoved:event];
 }
 

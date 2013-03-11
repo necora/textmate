@@ -236,12 +236,12 @@ static NSString* const kRecordingPlaceholderString = @"…";
 	}
 	else
 	{
-		static std::string const ClearKeys[] = { utf8::to_s(NSDeleteCharacter), utf8::to_s(NSDeleteFunctionKey) };
-		static std::string const RecordingKeys[] = { " ", "\n", "\r" };
+		static std::set<std::string> const ClearKeys     = { utf8::to_s(NSDeleteCharacter), utf8::to_s(NSDeleteFunctionKey) };
+		static std::set<std::string> const RecordingKeys = { " ", "\n", "\r" };
 		std::string const keyString = to_s(anEvent);
-		if(oak::contains(beginof(ClearKeys), endof(ClearKeys), keyString))
+		if(ClearKeys.find(keyString) != ClearKeys.end())
 			[self clearKeyEquivalent:self];
-		else if(oak::contains(beginof(RecordingKeys), endof(RecordingKeys), keyString))
+		else if(RecordingKeys.find(keyString) != RecordingKeys.end())
 			self.recording = YES;
 		else
 			[self interpretKeyEvents:@[ anEvent ]];
@@ -268,10 +268,10 @@ static NSString* const kRecordingPlaceholderString = @"…";
 	NSFrameRect(frame);
 	NSEraseRect(NSIntersectionRect(aRect, NSInsetRect(frame, 1, 1)));
 
-	NSDictionary* stringAttributes = [NSDictionary dictionaryWithObjectsAndKeys:
-		recording ? [NSColor grayColor] : [NSColor blackColor],                 NSForegroundColorAttributeName,
-		[NSFont userFixedPitchFontOfSize:12], NSFontAttributeName,
-		nil];
+	NSDictionary* stringAttributes = @{
+		NSForegroundColorAttributeName : recording ? [NSColor grayColor] : [NSColor blackColor],
+		NSFontAttributeName            : [NSFont controlContentFontOfSize:0]
+	};
 
 	NSSize size = [displayString sizeWithAttributes:stringAttributes];
 	[displayString drawAtPoint:NSMakePoint(NSMidX([self visibleRect]) - size.width / 2, NSMidY([self visibleRect]) - size.height /2 ) withAttributes:stringAttributes];

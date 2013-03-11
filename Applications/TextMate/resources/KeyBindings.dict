@@ -31,7 +31,6 @@
 	"~\UF705"  = "showContextMenu:";
 
 	"~\UF704"  = "showBundlesMenu:";
-	"^s"       = "incrementalSearch:";
 
 	"^w"       = "selectWord:";
 	"@L"       = "selectHardLine:";
@@ -54,7 +53,4 @@
 	"^q"       = "reformatText:";
 	"^j"       = "reformatTextAndJustify:";
 	"^~q"      = "unwrapText:";
-
-	"^r"       = "executeSelectionInsertingOutput:";
-	"^~r"      = "executeSelectionReplacingSelection:";
 }

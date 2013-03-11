@@ -5,13 +5,19 @@
 
 @class OTVStatusBar;
 
-@interface OakDocumentView : NSView <GutterViewDelegate, GutterViewColumnDataSource, GutterViewColumnDelegate>
+PUBLIC @interface OakDocumentView : NSView <GutterViewDelegate, GutterViewColumnDataSource, GutterViewColumnDelegate>
 {
 	OBJC_WATCH_LEAKS(OakDocumentView);
 
 	NSScrollView* gutterScrollView;
 	GutterView* gutterView;
 	NSColor* gutterDividerColor;
+	NSDictionary* gutterImages;
+	NSDictionary* gutterHoverImages;
+	NSDictionary* gutterPressedImages;
+
+	NSBox* gutterDividerView;
+	NSBox* statusDividerView;
 
 	NSScrollView* textScrollView;
 	OakTextView* textView;
@@ -26,7 +32,6 @@
 }
 @property (nonatomic, readonly) OakTextView* textView;
 @property (nonatomic, assign) document::document_ptr const& document;
-@property (nonatomic, assign) BOOL showResizeThumb;
 - (IBAction)toggleLineNumbers:(id)sender;
 - (IBAction)takeThemeUUIDFrom:(id)sender;
 
@@ -34,4 +39,6 @@
 
 - (void)addAuxiliaryView:(NSView*)aView atEdge:(NSRectEdge)anEdge;
 - (void)removeAuxiliaryView:(NSView*)aView;
+
+- (IBAction)showSymbolChooser:(id)sender;
 @end

@@ -30,6 +30,8 @@ namespace ng
 		kMoveToBeginningOfColumnAndModifySelection,
 		kMoveToBeginningOfDocument,
 		kMoveToBeginningOfDocumentAndModifySelection,
+		kMoveToBeginningOfIndentedLine,
+		kMoveToBeginningOfIndentedLineAndModifySelection,
 		kMoveToBeginningOfLine,
 		kMoveToBeginningOfLineAndModifySelection,
 		kMoveToBeginningOfParagraph,
@@ -40,6 +42,8 @@ namespace ng
 		kMoveToEndOfColumnAndModifySelection,
 		kMoveToEndOfDocument,
 		kMoveToEndOfDocumentAndModifySelection,
+		kMoveToEndOfIndentedLine,
+		kMoveToEndOfIndentedLineAndModifySelection,
 		kMoveToEndOfLine,
 		kMoveToEndOfLineAndModifySelection,
 		kMoveToEndOfParagraph,
@@ -69,6 +73,8 @@ namespace ng
 
 		kFindNext,
 		kFindPrevious,
+		kFindNextAndModifySelection,
+		kFindPreviousAndModifySelection,
 		kFindAll,
 		kFindAllInSelection,
 
@@ -82,8 +88,10 @@ namespace ng
 		kDeleteForward,
 		kDeleteSubWordLeft,
 		kDeleteSubWordRight,
+		kDeleteToBeginningOfIndentedLine,
 		kDeleteToBeginningOfLine,
 		kDeleteToBeginningOfParagraph,
+		kDeleteToEndOfIndentedLine,
 		kDeleteToEndOfLine,
 		kDeleteToEndOfParagraph,
 		kDeleteWordBackward,
@@ -150,14 +158,14 @@ namespace ng
 		editor_t (buffer_t& buffer);
 		editor_t (document::document_ptr document);
 
-		void perform (action_t action, layout_t const* layout = NULL);
+		void perform (action_t action, layout_t const* layout = NULL, bool indentCorrections = false, std::string const& scopeAttributes = NULL_STR);
 
 		bool disallow_tab_expansion () const;
 
 		void insert (std::string const& str, bool selectInsertion = false);
-		void insert_with_pairing (std::string const& str);
+		void insert_with_pairing (std::string const& str, bool indentCorrections = false, std::string const& scopeAttributes = NULL_STR);
 		void move_selection_to (ng::index_t const& index, bool selectInsertion = true);
-		ranges_t replace (std::string const& searchFor, std::string const& replaceWith, find::options_t options = find::none, bool searchOnlySelection = false);
+		ranges_t replace_all (std::string const& searchFor, std::string const& replaceWith, find::options_t options = find::none, bool searchOnlySelection = false);
 		void delete_tab_trigger (std::string const& str);
 
 		void macro_dispatch (plist::dictionary_t const& args, std::map<std::string, std::string> const& variables);
@@ -165,8 +173,8 @@ namespace ng
 		void snippet_dispatch (plist::dictionary_t const& args, std::map<std::string, std::string> const& variables);
 		void execute_dispatch (plist::dictionary_t const& args, std::map<std::string, std::string> const& variables);
 
-		scope::context_t scope () const;
-		std::map<std::string, std::string> variables (std::map<std::string, std::string> map) const;
+		scope::context_t scope (std::string const& scopeAttributes) const;
+		std::map<std::string, std::string> variables (std::map<std::string, std::string> map, std::string const& scopeAttributes) const;
 
 		std::vector<std::string> const& choices () const;
 		std::string placeholder_content (ng::range_t* placeholderSelection = NULL) const;
@@ -179,6 +187,8 @@ namespace ng
 
 		void perform_replacements (std::multimap<text::range_t, std::string> const& replacements);
 		bool handle_result (std::string const& out, output::type placement, output_format::type format, output_caret::type outputCaret, text::range_t input_range, std::map<std::string, std::string> environment);
+
+		void clear_snippets ();
 
 		// ==============
 		// = Clipboards =
@@ -198,8 +208,8 @@ namespace ng
 		void setup ();
 		friend struct indent_helper_t;
 
-		static size_t visual_distance (ng::buffer_t const& buffer, index_t first, index_t last);
-		static index_t visual_advance (ng::buffer_t const& buffer, index_t caret, size_t distance);
+		static size_t visual_distance (ng::buffer_t const& buffer, index_t first, index_t last, bool eastAsianWidth = true);
+		static index_t visual_advance (ng::buffer_t const& buffer, index_t caret, size_t distance, bool eastAsianWidth = true);
 
 		static ng::ranges_t insert_tab_with_indent (ng::buffer_t& buffer, ng::ranges_t const& selections, snippet_controller_t& snippets);
 		static ng::ranges_t insert_newline_with_indent (ng::buffer_t& buffer, ng::ranges_t const& selections, snippet_controller_t& snippets);
@@ -240,17 +250,17 @@ namespace ng
 			ssize_t _index = 0;
 		};
 
-		std::vector<std::string> completions (size_t bow, size_t eow, std::string const& prefix, std::string const& suffix);
-		bool setup_completion ();
-		void next_completion ();
-		void previous_completion ();
+		std::vector<std::string> completions (size_t bow, size_t eow, std::string const& prefix, std::string const& suffix, std::string const& scopeAttributes);
+		bool setup_completion (std::string const& scopeAttributes);
+		void next_completion (std::string const& scopeAttributes);
+		void previous_completion (std::string const& scopeAttributes);
 
 		// ============
 		// = Snippets =
 		// ============
 
-		void snippet (std::string const& str, std::map<std::string, std::string> const& variables);
-		ranges_t snippet (size_t from, size_t to, std::string const& str, std::map<std::string, std::string> const& variables);
+		void snippet (std::string const& str, std::map<std::string, std::string> const& variables, bool disableIndent = false);
+		ranges_t snippet (size_t from, size_t to, std::string const& str, std::map<std::string, std::string> const& variables, bool disableIndent);
 
 		void find (std::string const& searchFor, find::options_t options = find::none, bool searchOnlySelection = false);
 		ranges_t replace (std::multimap<range_t, std::string> const& replacements, bool selectInsertions = false);
@@ -275,7 +285,7 @@ namespace ng
 		document::document_ptr _document;
 	};
 
-	typedef std::tr1::shared_ptr<editor_t> editor_ptr;
+	typedef std::shared_ptr<editor_t> editor_ptr;
 
 	PUBLIC editor_ptr editor_for_document (document::document_ptr document);
 

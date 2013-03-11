@@ -67,6 +67,9 @@ namespace ng
 
 	std::string buffer_t::operator[] (size_t i) const
 	{
+		if(i == size())
+			return "";
+
 		size_t from     = i;
 		size_t totalLen = 1;
 		uint32_t ch     = code_point(from, totalLen);
@@ -175,7 +178,7 @@ namespace ng
 			_dirty.clear();
 			_dirty.set(0, true);
 
-			initiate_repair();
+			initiate_repair(10);
 
 			return true;
 		}
@@ -267,12 +270,38 @@ namespace ng
 	std::map<size_t, std::string> buffer_t::symbols () const    { return _symbols->symbols(this);      }
 	std::string buffer_t::symbol_at (size_t i) const            { return _symbols->symbol_at(this, i); }
 
-	void buffer_t::set_live_spelling (bool flag)                                   { remove_meta_data(_spelling.get()); _spelling.reset(flag ? new spelling_t : NULL); add_meta_data(_spelling.get()); }
-	bool buffer_t::live_spelling () const                                          { return _spelling; }
-	void buffer_t::set_spelling_language (std::string const& lang)                 { _spelling_language = lang; }
+	// ==================
+	// = Spell Checking =
+	// ==================
+
+	bool buffer_t::live_spelling () const                                          { return _spelling ? true : false; }
 	std::string const& buffer_t::spelling_language () const                        { return _spelling_language; }
 	std::map<size_t, bool> buffer_t::misspellings (size_t from, size_t to) const   { return _spelling ? _spelling->misspellings(this, from, to) : std::map<size_t, bool>(); }
 	ns::spelling_tag_t buffer_t::spelling_tag () const                             { return _spelling_tag; }
+
+	void buffer_t::set_live_spelling (bool flag)
+	{
+		remove_meta_data(_spelling.get());
+		_spelling.reset(flag ? new spelling_t : NULL);
+		add_meta_data(_spelling.get());
+
+		if(flag && _spelling)
+			_spelling->recheck(this, 0, size());
+	}
+
+	void buffer_t::set_spelling_language (std::string const& lang)
+	{
+		if(lang != _spelling_language)
+		{
+			_spelling_language = lang;
+			if(_spelling)
+				_spelling->recheck(this, 0, size());
+		}
+	}
+
+	// =========
+	// = Marks =
+	// =========
 
 	void buffer_t::set_mark (size_t index, std::string const& markType)                                           { return _marks->set(index, markType); }
 	void buffer_t::remove_mark (size_t index, std::string const& markType)                                        { return _marks->remove(index, markType); }

@@ -178,6 +178,11 @@ namespace path
 		return !path.empty() && path[0] == '/' ? normalize(path) : normalize(base + "/" + path);
 	}
 
+	std::string join (std::initializer_list<std::string> const& components)
+	{
+		return normalize(text::join(components, "/"));
+	}
+
 	bool is_absolute (std::string const& path)
 	{
 		if(!path.empty() && path[0] == '/')
@@ -189,11 +194,18 @@ namespace path
 		return false;
 	}
 
+	bool is_child (std::string const& nonNormalizedChild, std::string const& nonNormalizedParent)
+	{
+		std::string const child  = normalize(nonNormalizedChild);
+		std::string const parent = normalize(nonNormalizedParent);
+		return child.find(parent) == 0 && (parent.size() == child.size() || child[parent.size()] == '/');
+	}
+
 	std::string with_tilde (std::string const& p)
 	{
 		std::string const& base = home();
-		std::string const& path = normalize(p);
-		if(oak::has_prefix(path.begin(), path.end(), base.begin(), base.end()))
+		std::string const& path = normalize(p) + (p.size() > 1 && p[p.size()-1] == '/' ? "/" : "");
+		if(oak::has_prefix(path.begin(), path.end(), base.begin(), base.end()) && (path.size() == base.size() || path[base.size()] == '/'))
 			return "~" + path.substr(base.size());
 		return path;
 	}
@@ -266,12 +278,15 @@ namespace path
 			{
 				char buf[PATH_MAX];
 				ssize_t len = readlink(path.c_str(), buf, sizeof(buf));
-				if(len == -1)
+				if(0 < len && len < PATH_MAX)
 				{
-					fprintf(stderr, "*** error reading link ‘%s’\n", path.c_str());
-					return NULL_STR;
+					path = resolve_links(join(resolvedParent, std::string(buf, buf + len)), resolveParent, seen);
 				}
-				path = resolve_links(join(resolvedParent, std::string(buf, buf + len)), resolveParent, seen);
+				else
+				{
+					std::string errStr = len == -1 ? strerror(errno) : text::format("Result outside allowed range %zd", len);
+					fprintf(stderr, "*** readlink(‘%s’) failed: %s\n", path.c_str(), errStr.c_str());
+				}
 			}
 			else if(S_ISREG(buf.st_mode))
 			{
@@ -323,7 +338,7 @@ namespace path
 		CFURLRef url = CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, (UInt8 const*)path.data(), path.size(), is_directory(path));
 		if(!url) return false;
 		CFBooleanRef pathIsLocal;
-		bool ok = CFURLCopyResourcePropertyForKey(url, kCFURLVolumeIsLocalKey, &pathIsLocal, NULL);		
+		bool ok = CFURLCopyResourcePropertyForKey(url, kCFURLVolumeIsLocalKey, &pathIsLocal, NULL);
 		CFRelease(url);
 		if(!ok) return false;
 		return (pathIsLocal == kCFBooleanTrue);
@@ -384,6 +399,9 @@ namespace path
 
 	bool identifier_t::operator< (identifier_t const& rhs) const
 	{
+		if(path == rhs.path)
+			return false;
+
 		if(exists == rhs.exists)
 		{
 			if(exists)
@@ -395,7 +413,7 @@ namespace path
 
 	bool identifier_t::operator== (identifier_t const& rhs) const
 	{
-		return exists && rhs.exists ? device == rhs.device && inode == rhs.inode : path == rhs.path;
+		return path == rhs.path || (exists && rhs.exists && device == rhs.device && inode == rhs.inode);
 	}
 
 	bool identifier_t::operator!= (identifier_t const& rhs) const
@@ -481,6 +499,8 @@ namespace path
 	uint32_t info (std::string const& path, uint32_t mask)
 	{
 		uint32_t res = 0;
+		if(path == NULL_STR)
+			return res;
 
 		std::string const& name = path::name(path);
 		if(name == ".")
@@ -504,10 +524,9 @@ namespace path
 				res |= flag::symlink_bsd;
 			if(S_ISFIFO(buf.st_mode))
 				res |= flag::socket_bsd;
-#if MAC_OS_X_VERSION_MAX_ALLOWED > MAC_OS_X_VERSION_10_4
 			if(buf.st_flags & UF_HIDDEN)
 				res |= flag::hidden_bsd;
-#endif
+
 			if((res & flag::directory_bsd) && hide_volume(buf.st_dev, path))
 				res |= flag::hidden_volume;
 		}
@@ -615,47 +634,55 @@ namespace path
 		return res;
 	}
 
-	static std::string folder_with_n_parents (std::string const& path, size_t components)
+	static size_t count_slashes (std::string const& s1, std::string const& s2)
 	{
-		std::string::const_reverse_iterator const& last = path.rend();
-		std::string::const_reverse_iterator from        = std::find(path.rbegin(), last, '/');
-		for(; components > 0 && from != last; --components)
-			from = std::find(++from, last, '/');
-		return std::string(from.base(), path.end());
+		auto s1First = s1.rbegin(), s1Last = s1.rend();
+		auto s2First = s2.rbegin(), s2Last = s2.rend();
+		while(s1First != s1Last && s2First != s2Last)
+		{
+			if(*s1First != *s2First)
+				break;
+			++s1First, ++s2First;
+		}
+		return std::count(s1.rbegin(), s1First, '/');
 	}
 
 	std::vector<size_t> disambiguate (std::vector<std::string> const& paths)
 	{
-		std::map<std::string, size_t> unique;
-		iterate(it, paths)
-			++unique[*it];
+		std::vector<size_t> v(paths.size());
+		std::iota(v.begin(), v.end(), 0);
 
-		std::vector<size_t> redo;
-		for(size_t i = 0; i < paths.size(); ++i)
-			redo.push_back(i);
-
-		std::vector<size_t> levels(paths.size(), 0);
-		while(!redo.empty())
-		{
-			std::map< std::string, std::vector<size_t> > map;
-			iterate(it, redo)
-				map[folder_with_n_parents(paths[*it], levels[*it])].push_back(*it);
-			redo.clear();
-
-			iterate(it, map)
+		std::sort(v.begin(), v.end(), [&paths](size_t const& lhs, size_t const& rhs) -> bool {
+			auto s1First = paths[lhs].rbegin(), s1Last = paths[lhs].rend();
+			auto s2First = paths[rhs].rbegin(), s2Last = paths[rhs].rend();
+			while(s1First != s1Last && s2First != s2Last)
 			{
-				if(it->second.size() > 1)
-				{
-					if(it->second.size() == unique[paths[it->second.back()]])
-						continue;
-
-					iterate(innerIter, it->second)
-					{
-						++levels[*innerIter];
-						redo.push_back(*innerIter);
-					}
-				}
+				if(*s1First < *s2First)
+					return true;
+				else if(*s1First != *s2First)
+					return false;
+				++s1First, ++s2First;
 			}
+			return s1First == s1Last && s2First != s2Last;
+		});
+
+		std::vector<size_t> levels(paths.size());
+		for(size_t i = 0; i < v.size(); )
+		{
+			std::string const& current = paths[v[i]];
+			size_t above = 0, below = 0;
+
+			if(i != 0)
+				above = count_slashes(current, paths[v[i-1]]);
+
+			size_t j = i;
+			while(j < v.size() && current == paths[v[j]])
+				++j;
+			if(j < v.size())
+				below = count_slashes(current, paths[v[j]]);
+
+			for(; i < j; ++i)
+				levels[v[i]] = std::max(above, below);
 		}
 
 		return levels;
@@ -670,7 +697,7 @@ namespace path
 		std::string base = name(strip_extension(requestedPath));
 		std::string ext  = extension(requestedPath);
 
-		if(regexp::match_t const& m = regexp::search(" \\d+$", base.data(), base.data() + base.size()))
+		if(regexp::match_t const& m = regexp::search(" \\d+$", base))
 			base.erase(m.begin());
 		if(suffix != "" && base.size() > suffix.size() && base.find(suffix) == base.size() - suffix.size())
 			base.erase(base.size() - suffix.size());
@@ -902,7 +929,7 @@ namespace path
 		errno = EEXIST;
 		return false;
 	}
-#if MAC_OS_X_VERSION_MAX_ALLOWED > MAC_OS_X_VERSION_10_4
+
 	std::string move_to_trash (std::string const& path)
 	{
 		fsref_t result;
@@ -910,7 +937,7 @@ namespace path
 			return NULL_STR;
 		return result.path();
 	}
-#endif
+
 	std::string duplicate (std::string const& src, std::string dst, bool overwrite)
 	{
 		if(dst == NULL_STR)
@@ -933,12 +960,14 @@ namespace path
 	bool make_dir (std::string const& path)
 	{
 		D(DBF_IO_Path, bug("%s\n", path.c_str()););
-		if(exists(path))
-			return info(resolve(path)) & flag::directory;
-		return path == NULL_STR ? false : make_dir(parent(path)) && mkdir(path.c_str(), S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH) == 0;
+		if(path != NULL_STR && !exists(path))
+		{
+			make_dir(parent(path));
+			mkdir(path.c_str(), S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH);
+		}
+		return exists(path) && info(resolve(path)) & flag::directory;
 	}
 
-#if MAC_OS_X_VERSION_MAX_ALLOWED > MAC_OS_X_VERSION_10_4
 	void touch_tree (std::string const& basePath)
 	{
 		lutimes(basePath.c_str(), NULL);
@@ -953,7 +982,6 @@ namespace path
 				lutimes(path.c_str(), NULL);
 		}
 	}
-#endif
 
 	// ===============
 	// = Global Info =
@@ -1029,25 +1057,39 @@ namespace path
 		return FSFindFolder(info.volume, kTrashFolderType, false, &res) == noErr ? to_s(res) : NULL_STR;;
 	}
 
+	static std::string temp_file_in_directory (std::string const& path, std::string const& file)
+	{
+		if(file == NULL_STR)
+			return path;
+
+		std::string res = path::join(path, std::string(getprogname() ?: "untitled") + "_" + file + ".XXXXXX");
+		res.c_str(); // ensure the buffer is zero terminated, should probably move to a better approach
+		mktemp(&res[0]);
+
+		D(DBF_IO_Path, bug("%s\n", res.c_str()););
+		return res;
+	}
+
 	std::string temp (std::string const& file)
 	{
 		std::string str(128, ' ');
-#if MAC_OS_X_VERSION_MAX_ALLOWED > MAC_OS_X_VERSION_10_4
 		size_t len = confstr(_CS_DARWIN_USER_TEMP_DIR, &str[0], str.size());
 		if(0 < len && len < 128) // if length is 128 the path was truncated and unusable
 				str.resize(len - 1);
 		else	str = getenv("TMPDIR") ?: "/tmp";
-#else
-		str = getenv("TMPDIR") ?: "/tmp";
-#endif
-		if(file != NULL_STR)
-		{
-			str = path::join(str, std::string(getprogname() ?: "untitled") + "_" + file + ".XXXXXX");
-			str.c_str(); // ensure the buffer is zero terminated, should probably move to a better approach
-			mktemp(&str[0]);
-		}
-		D(DBF_IO_Path, bug("%s\n", str.c_str()););
-		return str;
+
+		return temp_file_in_directory(str, file);
+	}
+
+	std::string cache (std::string const& file)
+	{
+		std::string str(128, ' ');
+		size_t len = confstr(_CS_DARWIN_USER_CACHE_DIR, &str[0], str.size());
+		if(0 < len && len < 128) // if length is 128 the path was truncated and unusable
+				str.resize(len - 1);
+		else	str = path::temp();
+
+		return temp_file_in_directory(str, file);
 	}
 
 	std::string desktop ()

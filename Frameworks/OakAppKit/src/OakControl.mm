@@ -1,23 +1,20 @@
-#import "OakControl.h"
+#import "OakControl Private.h"
 #import "NSView Additions.h"
-#import <ns/attr_string.h>
+#import "NSColor Additions.h"
+#import <oak/oak.h>
 
 // The lineBreakMode parameter is here to work around a crash in CoreText <rdar://6940427> — fixed in 10.6
 static CFAttributedStringRef AttributedStringWithOptions (NSString* string, uint32_t options, NSLineBreakMode lineBreakMode = NSLineBreakByTruncatingTail)
 {
-	ns::attr_string_t text;
-	text.add([NSFont controlContentFontOfSize:[NSFont smallSystemFontSize]]);
-	text.add(ns::style::line_break(lineBreakMode));
-	if(options & layer_t::shadow)
-	{
-		NSShadow* shadow = [[[NSShadow alloc] init] autorelease];
-		[shadow setShadowOffset:NSMakeSize(0, -1)];
-		[shadow setShadowBlurRadius:1.0];
-		[shadow setShadowColor:[NSColor colorWithCalibratedWhite:1.0 alpha:0.8]];
-		text.add(shadow);
-	}
-	text.add(string);
-	return text;
+	NSMutableDictionary* attr = [NSMutableDictionary dictionary];
+	attr[NSFontAttributeName] = [NSFont controlContentFontOfSize:[NSFont smallSystemFontSize]];
+
+	NSMutableParagraphStyle* paragraph = [[NSMutableParagraphStyle new] autorelease];
+	[paragraph setLineBreakMode:lineBreakMode];
+	attr[NSParagraphStyleAttributeName] = paragraph;
+
+	NSAttributedString* res = [[[NSAttributedString alloc] initWithString:string attributes:attr] autorelease];
+	return (CFAttributedStringRef)res;
 }
 
 double WidthOfText (NSString* string)
@@ -49,6 +46,9 @@ static void DrawTextWithOptions (NSString* string, NSRect bounds, uint32_t textO
 	if(!frame)
 		return;
 
+	if(textOptions & layer_t::shadow)
+		CGContextSetShadowWithColor(context, NSMakeSize(0, -1), 1, [[NSColor colorWithCalibratedWhite:1 alpha:0.6] tmCGColor]);
+
 	CTFrameDraw(frame, context);
 
 	CFRelease(frame);
@@ -64,14 +64,28 @@ static void DrawTextWithOptions (NSString* string, NSRect bounds, uint32_t textO
 OAK_DEBUG_VAR(OakControl);
 
 @implementation OakControl
+{
+	NSInteger tag;
+
+	std::vector<layer_t> layout;
+	BOOL isTransparent;
+	BOOL mouseTrackingDisabled;
+
+	// ===================
+	// = MouseDown State =
+	// ===================
+
+	BOOL isInMouseDown;
+	NSPoint mouseDownPos;
+}
 @synthesize tag, mouseTrackingDisabled;
 
-- (std::vector<layer_t> const&)layout
+- (std::vector<layer_t> const&)layers
 {
 	return layout;
 }
 
-- (void)setLayout:(std::vector<layer_t> const&)aLayout
+- (void)setLayers:(std::vector<layer_t> const&)aLayout
 {
 	// Remove views that are no longer in the layout
 	iterate(oldLayer, layout)
@@ -360,9 +374,9 @@ struct rect_cmp_t
 {
 	bool operator() (NSRect const& a, NSRect const& b) const
 	{
-		CGFloat aValues[] = { NSMinX(a), NSMinY(a), NSMaxX(a), NSMaxY(a) };
-		CGFloat bValues[] = { NSMinX(b), NSMinY(b), NSMaxX(b), NSMaxY(b) };
-		return std::lexicographical_compare(beginof(aValues), endof(aValues), beginof(bValues), endof(bValues));
+		auto lhs = std::make_tuple(NSMinX(a), NSMinY(a), NSMaxX(a), NSMaxY(a));
+		auto rhs = std::make_tuple(NSMinX(b), NSMinY(b), NSMaxX(b), NSMaxY(b));
+		return lhs < rhs;
 	}
 };
 
@@ -428,6 +442,7 @@ struct rect_cmp_t
 	[self clearTrackingRects];
 	if(newWindow)
 		[self setupTrackingRects];
+	[super viewWillMoveToWindow:newWindow];
 }
 
 - (void)setKeyState:(NSUInteger)newState

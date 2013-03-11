@@ -82,18 +82,25 @@ namespace ng
 
 		if(!r.empty())
 		{
-			if(format == input_format::xml)
-					new write_t(fd, to_xml(buffer, r.min().index, r.max().index));
-			else	new write_t(fd, buffer.substr(r.min().index, r.max().index));
+			std::string str = "";
+			bool first = true;
+			citerate(range, dissect_columnar(buffer, r))
+			{
+				if(!first)
+					str += "\n";
+				str += format == input_format::xml ? to_xml(buffer, range->min().index, range->max().index) : buffer.substr(range->min().index, range->max().index);
+				first = false;
+			}
+			new write_t(fd, str);
 		}
 		close(fd);
 
 		if(r && actualUnit != input::entire_document)
 		{
 			text::pos_t const& pos = buffer.convert(r.min().index);
-			variables.insert(std::make_pair("TM_INPUT_START_LINE",       text::format("%zu", pos.line + 1)));
-			variables.insert(std::make_pair("TM_INPUT_START_LINE_INDEX", text::format("%zu", pos.column)));
-			variables.insert(std::make_pair("TM_INPUT_START_COLUMN",     text::format("%zu", count_columns(buffer, r.min(), tabSize) + 1)));
+			variables.insert(std::make_pair("TM_INPUT_START_LINE",       std::to_string(pos.line + 1)));
+			variables.insert(std::make_pair("TM_INPUT_START_LINE_INDEX", std::to_string(pos.column)));
+			variables.insert(std::make_pair("TM_INPUT_START_COLUMN",     std::to_string(count_columns(buffer, r.min(), tabSize) + 1)));
 		}
 		return text::range_t(buffer.convert(r.min().index), buffer.convert(r.max().index));
 	}

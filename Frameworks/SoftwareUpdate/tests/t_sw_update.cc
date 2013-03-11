@@ -21,24 +21,13 @@ static std::string fixtures_path ()
 
 static class WebServerFixture : public CxxTest::GlobalFixture
 {
-	static void* main (void* arg)
-	{
-		web::run_server(fixtures_path());
-		return NULL;
-	}
-
-	pthread_t _thread;
-
 public:
 	bool setUpWorld()
 	{
 		if(web::setup_server(WEB_SERVER_PORT))
 		{
-			if(pthread_create(&_thread, NULL, &main, this) == 0)
-			{
-				pthread_detach(_thread);
-				return true;
-			}
+			std::thread([]{ web::run_server(fixtures_path()); }).detach();
+			return true;
 		}
 		return false;
 	}
@@ -90,7 +79,7 @@ public:
 		std::string url("http://localhost:" STRINGIFY(WEB_SERVER_PORT) "/bad_bzip.tbz");
 		std::string err = NULL_STR;
 		std::string archive = sw_update::download_update(url, key_chain(), &err);
-		TS_ASSERT_EQUALS(err, "Corrupt archive.");
+		TS_ASSERT_EQUALS(err, "Extracting archive.");
 		TS_ASSERT_EQUALS(archive, NULL_STR);
 	}
 
@@ -99,7 +88,7 @@ public:
 		std::string url("http://localhost:" STRINGIFY(WEB_SERVER_PORT) "/bad_tar.tbz");
 		std::string err = NULL_STR;
 		std::string archive = sw_update::download_update(url, key_chain(), &err);
-		TS_ASSERT_EQUALS(err, "Corrupt archive.");
+		TS_ASSERT_EQUALS(err, "Extracting archive.");
 		TS_ASSERT_EQUALS(archive, NULL_STR);
 	}
 

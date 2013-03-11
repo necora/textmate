@@ -96,11 +96,16 @@ namespace regexp
 			for(size_t i = 0; i < size(); ++i)
 			{
 				if(did_match(i))
-					captured_indices->insert(std::make_pair(text::format("%zu", i), std::make_pair(begin(i), end(i))));
+					captured_indices->insert(std::make_pair(std::to_string(i), std::make_pair(begin(i), end(i))));
 			}
 			onig_foreach_name(compiled_pattern.get(), &helper_t::main, (void*)this);
 		}
 		return *captured_indices;
+	}
+
+	std::string match_t::operator[] (size_t i) const
+	{
+		return did_match(i) ? std::string(buffer() + begin(i), buffer() + end(i)) : NULL_STR;
 	}
 
 	// ============
@@ -117,6 +122,11 @@ namespace regexp
 				return match_t(region, ptrn.get(), first);
 		}
 		return match_t();
+	}
+
+	match_t search (pattern_t const& ptrn, std::string const& str)
+	{
+		return search(ptrn, str.data(), str.data() + str.size());
 	}
 
 	// =====================

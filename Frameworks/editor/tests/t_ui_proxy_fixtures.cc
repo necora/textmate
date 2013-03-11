@@ -1,6 +1,7 @@
 #include <document/collection.h>
 #include <bundles/bundles.h>
 #include <settings/settings.h>
+#include <file/path_info.h>
 #include <command/runner.h>
 
 class UIProxyFixture : public CxxTest::GlobalFixture
@@ -10,11 +11,9 @@ public:
 	{
 		static struct proxy_t : document::ui_proxy_t
 		{
-			void show_documents (std::vector<document::document_ptr> const& documents, std::string const& browserPath) { }
+			void show_browser (std::string const& path) const { }
+			void show_documents (std::vector<document::document_ptr> const& documents) const { }
 			void show_document (oak::uuid_t const& collection, document::document_ptr document, text::range_t const& range, bool bringToFront) const { }
-
-			bool load_session (std::string const& path) const { return false; }
-			bool save_session (std::string const& path, bool includeUntitled) const { return false; }
 
 			void run (bundle_command_t const& command, ng::buffer_t const& buffer, ng::ranges_t const& selection, document::document_ptr document, std::map<std::string, std::string> const& baseEnv, document::run_callback_ptr callback)
 			{
@@ -46,14 +45,7 @@ public:
 					document::document_ptr _document;
 				};
 
-				std::map<std::string, std::string> env;
-				bundles::item_ptr item = bundles::lookup(command.uuid);
-				env = item ? item->environment(baseEnv) : baseEnv;
-
-				if(document && document->is_open())
-						env = ng::editor_for_document(document)->variables(env);
-				else	env = variables_for_path(NULL_STR, "", env);
-				command::runner_ptr runner = command::runner(command, buffer, selection, env, command::delegate_ptr((command::delegate_t*)new delegate_t(document)));
+				command::runner_ptr runner = command::runner(command, buffer, selection, baseEnv, command::delegate_ptr((command::delegate_t*)new delegate_t(document)));
 				runner->launch();
 				runner->wait();
 			}

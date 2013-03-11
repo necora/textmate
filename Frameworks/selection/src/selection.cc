@@ -106,7 +106,7 @@ namespace ng
 
 	static range_t cap (buffer_t const& buf, text::range_t const& range)
 	{
-		return range_t(cap(buf, range.from), cap(buf, range.to), range.columnar);
+		return range_t(cap(buf, range.from), cap(buf, range.to), range.columnar, false, true);
 	}
 
 	ranges_t convert (buffer_t const& buf, text::selection_t const& sel)
@@ -155,7 +155,7 @@ namespace ng
 		{
 			character_pair_t () { }
 			character_pair_t (std::string const& first, std::string const& second, bool matchedFirst) : first(first), second(second), matched_first(matchedFirst), initialized(true) { }
-			EXPLICIT operator bool () const { return initialized; }
+			explicit operator bool () const { return initialized; }
 
 			std::string first, second;
 			bool matched_first, initialized = false;
@@ -307,7 +307,7 @@ namespace ng
 				size_t fromLine = std::min(lineA, lineB), fromCol = std::min(colA, colB);
 				size_t toLine   = std::max(lineA, lineB), toCol   = std::max(colA, colB);
 
-				for(size_t n = fromLine; n <= toLine; ++n)				
+				for(size_t n = fromLine; n <= toLine; ++n)
 				{
 					index_t from = at_column(buffer, n, fromCol), to = at_column(buffer, n, toCol);
 					res.push_back(range_t(from, to, false, from.carry || to.carry));
@@ -349,8 +349,17 @@ namespace ng
 		bool res = true;
 		static std::string const whitespaceChars[] = { " ", "\t", "\n" };
 		while(from < to && res)
-			res = res && oak::contains(beginof(whitespaceChars), endof(whitespaceChars), buffer[from++]);
+			res = res && oak::contains(std::begin(whitespaceChars), std::end(whitespaceChars), buffer[from++]);
 		return res;
+	}
+
+	static size_t end_of_leading_indent (buffer_t const& buffer, size_t line)
+	{
+		size_t bol = buffer.begin(line);
+		size_t eol = buffer.eol(line);
+		while(bol < eol && isspace(utf8::to_ch(buffer[bol])))
+			++bol;
+		return bol;
 	}
 
 	static index_t move (buffer_t const& buffer, index_t const& index, move_unit_type unit, layout_movement_t const* layout)
@@ -392,6 +401,22 @@ namespace ng
 			case kSelectionMoveToEndOfTypingPair:     return end_of_typing_pair(buffer, caret, false);
 			case kSelectionMovePageUp:                return layout ? layout->page_up_for(index)   : index;
 			case kSelectionMovePageDown:              return layout ? layout->page_down_for(index) : index;
+
+			case kSelectionMoveToBeginOfIndentedLine:
+			{
+				size_t bol = buffer.begin(line);
+				size_t eoi = end_of_leading_indent(buffer, line);
+				return eoi < caret ? eoi : bol;
+			}
+			break;
+
+			case kSelectionMoveToEndOfIndentedLine:
+			{
+				size_t eoi = end_of_leading_indent(buffer, line);
+				size_t eol = buffer.eol(line);
+				return caret < eoi ? eoi : eol;
+			}
+			break;
 
 			case kSelectionMoveToBeginOfHardParagraph:
 			{
@@ -590,11 +615,11 @@ namespace ng
 
 	ranges_t move (buffer_t const& buffer, ranges_t const& selection, move_unit_type const orgUnit, layout_movement_t const* layout)
 	{
-		static move_unit_type const leftward[]   = { kSelectionMoveLeft,  kSelectionMoveFreehandedRight, kSelectionMoveToBeginOfLine, kSelectionMoveToBeginOfParagraph, kSelectionMoveToBeginOfTypingPair, kSelectionMoveToBeginOfSoftLine, kSelectionMoveToBeginOfSubWord, kSelectionMoveToBeginOfWord };
-		static move_unit_type const rightward[]  = { kSelectionMoveRight, kSelectionMoveFreehandedLeft, kSelectionMoveToEndOfLine, kSelectionMoveToEndOfParagraph, kSelectionMoveToEndOfTypingPair, kSelectionMoveToEndOfSoftLine, kSelectionMoveToEndOfSubWord, kSelectionMoveToEndOfWord            };
+		static std::set<move_unit_type> const leftward  = { kSelectionMoveLeft,  kSelectionMoveFreehandedRight, kSelectionMoveToBeginOfLine, kSelectionMoveToBeginOfParagraph, kSelectionMoveToBeginOfTypingPair, kSelectionMoveToBeginOfSoftLine, kSelectionMoveToBeginOfSubWord, kSelectionMoveToBeginOfWord };
+		static std::set<move_unit_type> const rightward = { kSelectionMoveRight, kSelectionMoveFreehandedLeft, kSelectionMoveToEndOfLine, kSelectionMoveToEndOfParagraph, kSelectionMoveToEndOfTypingPair, kSelectionMoveToEndOfSoftLine, kSelectionMoveToEndOfSubWord, kSelectionMoveToEndOfWord            };
 
-		bool isLeftward  = oak::contains(beginof(leftward),  endof(leftward),  orgUnit);
-		bool isRightward = oak::contains(beginof(rightward), endof(rightward), orgUnit);
+		bool isLeftward  = leftward.find(orgUnit)  != leftward.end();
+		bool isRightward = rightward.find(orgUnit) != rightward.end();
 
 		ranges_t res;
 		citerate(range, isLeftward || isRightward ? dissect_columnar(buffer, selection) : selection)
@@ -609,8 +634,8 @@ namespace ng
 				{
 					index = isLeftward ? range->min() : range->max();
 
-					static move_unit_type const left_right[] = { kSelectionMoveLeft,  kSelectionMoveRight, kSelectionMoveFreehandedRight, kSelectionMoveFreehandedLeft                                                                                                           };
-					if(oak::contains(beginof(left_right), endof(left_right), unit))
+					static std::set<move_unit_type> const left_right = { kSelectionMoveLeft,  kSelectionMoveRight, kSelectionMoveFreehandedRight, kSelectionMoveFreehandedLeft                                                                                                           };
+					if(left_right.find(unit) != left_right.end())
 						unit = kSelectionMoveNowhere;
 				}
 				else if(!range->columnar && (unit == kSelectionMoveUp || unit == kSelectionMoveDown) && buffer.convert(range->first.index).line != buffer.convert(range->last.index).line)
@@ -672,12 +697,12 @@ namespace ng
 
 		if(range.unanchored)
 		{
-			static select_unit_type towardBegin[] = { kSelectionExtendLeft, kSelectionExtendFreehandedLeft, kSelectionExtendUp, kSelectionExtendToBeginOfWord, kSelectionExtendToBeginOfSubWord, kSelectionExtendToBeginOfSoftLine, kSelectionExtendToBeginOfLine, kSelectionExtendToBeginOfParagraph, kSelectionExtendToBeginOfColumn, kSelectionExtendToBeginOfDocument, kSelectionExtendPageUp };
-			static select_unit_type towardEnd[]   = { kSelectionExtendRight, kSelectionExtendFreehandedRight, kSelectionExtendDown, kSelectionExtendToEndOfWord, kSelectionExtendToEndOfSubWord, kSelectionExtendToEndOfSoftLine, kSelectionExtendToEndOfLine, kSelectionExtendToEndOfParagraph, kSelectionExtendToEndOfColumn, kSelectionExtendToEndOfDocument, kSelectionExtendPageDown };
+			static std::set<select_unit_type> towardBegin = { kSelectionExtendLeft, kSelectionExtendFreehandedLeft, kSelectionExtendUp, kSelectionExtendToBeginOfWord, kSelectionExtendToBeginOfSubWord, kSelectionExtendToBeginOfSoftLine, kSelectionExtendToBeginOfIndentedLine, kSelectionExtendToBeginOfLine, kSelectionExtendToBeginOfParagraph, kSelectionExtendToBeginOfColumn, kSelectionExtendToBeginOfDocument, kSelectionExtendPageUp };
+			static std::set<select_unit_type> towardEnd   = { kSelectionExtendRight, kSelectionExtendFreehandedRight, kSelectionExtendDown, kSelectionExtendToEndOfWord, kSelectionExtendToEndOfSubWord, kSelectionExtendToEndOfSoftLine, kSelectionExtendToEndOfIndentedLine, kSelectionExtendToEndOfLine, kSelectionExtendToEndOfParagraph, kSelectionExtendToEndOfColumn, kSelectionExtendToEndOfDocument, kSelectionExtendPageDown };
 
-			if(first < last && oak::contains(beginof(towardBegin), endof(towardBegin), unit))
+			if(first < last && towardBegin.find(unit) != towardBegin.end())
 				std::swap(first, last);
-			else if(last < first && oak::contains(beginof(towardEnd), endof(towardEnd), unit))
+			else if(last < first && towardEnd.find(unit) != towardEnd.end())
 				std::swap(first, last);
 		}
 
@@ -701,6 +726,8 @@ namespace ng
 			case kSelectionExtendToEndOfWord:          return range_t(first, move(buffer, last, kSelectionMoveToEndOfWord,        layout), range.columnar, range.freehanded);
 			case kSelectionExtendToBeginOfSubWord:     return range_t(first, move(buffer, last, kSelectionMoveToBeginOfSubWord,   layout), range.columnar, range.freehanded);
 			case kSelectionExtendToEndOfSubWord:       return range_t(first, move(buffer, last, kSelectionMoveToEndOfSubWord,     layout), range.columnar, range.freehanded);
+			case kSelectionExtendToBeginOfIndentedLine: return range_t(first, move(buffer, last, kSelectionMoveToBeginOfIndentedLine, layout), range.columnar, range.freehanded);
+			case kSelectionExtendToEndOfIndentedLine:  return range_t(first, move(buffer, last, kSelectionMoveToEndOfIndentedLine, layout), range.columnar, range.freehanded);
 			case kSelectionExtendToBeginOfSoftLine:    return range_t(first, move(buffer, last, kSelectionMoveToBeginOfSoftLine,  layout), range.columnar, range.freehanded);
 			case kSelectionExtendToEndOfSoftLine:      return range_t(first, move(buffer, last, kSelectionMoveToEndOfSoftLine,    layout), range.columnar, range.freehanded);
 			case kSelectionExtendToBeginOfLine:        return range_t(first, move(buffer, last, kSelectionMoveToBeginOfLine,      layout), range.columnar, range.freehanded);
@@ -847,8 +874,12 @@ namespace ng
 
 	ranges_t extend (buffer_t const& buffer, ranges_t const& selection, select_unit_type const unit, layout_movement_t const* layout)
 	{
+		static std::set<select_unit_type> const splittingUnits = { kSelectionExtendToWord, kSelectionExtendToTypingPair, kSelectionExtendToScope, kSelectionExtendToEndOfSoftLine, kSelectionExtendToEndOfIndentedLine, kSelectionExtendToEndOfLine, kSelectionExtendToEndOfParagraph, kSelectionExtendToBeginOfTypingPair, kSelectionExtendToEndOfTypingPair };
+		bool isColumnar    = selection.size() == 1 && selection.last().columnar;
+		bool shouldDissect = isColumnar && splittingUnits.find(unit) != splittingUnits.end();
+
 		ranges_t res;
-		citerate(range, (unit == kSelectionExtendToWord || unit == kSelectionExtendToTypingPair || unit == kSelectionExtendToScope) ? dissect_columnar(buffer, selection) : selection)
+		citerate(range, shouldDissect ? dissect_columnar(buffer, selection) : selection)
 			res.push_back(extend(buffer, *range, unit, layout));
 		return sanitize(buffer, res);
 	}
@@ -941,19 +972,36 @@ namespace ng
 			}
 		}
 
-		if(selection.size() > 1 || selection.size() == 1 && !selection.last().empty())
+		if(selection.size() > 1)
 		{
-			std::string scopeAtom = "dyn.selection";
+			res.left  = res.left.append("dyn.caret.mixed");
+			res.right = res.right.append("dyn.caret.mixed");
+		}
+		else if(selection.last().columnar)
+		{
+			res.left  = res.left.append("dyn.caret.mixed.columnar");
+			res.right = res.right.append("dyn.caret.mixed.columnar");
+		}
+		else
+		{
+			size_t const leftCaret  = selection.last().min().index;
+			size_t const rightCaret = selection.last().max().index;
 
-			if(selection.size() > 1)
-				scopeAtom += ".discontinuous";
-			else if(selection.last().columnar)
-				scopeAtom += ".columnar";
-			else
-				scopeAtom += ".continuous";
+			if(leftCaret == 0)
+				res.left = res.left.append("dyn.caret.begin.document");
+			else if(leftCaret == buffer.begin(buffer.convert(leftCaret).line))
+				res.left = res.left.append("dyn.caret.begin.line");
 
-			res.left  = res.left.append(scopeAtom);
-			res.right = res.right.append(scopeAtom);
+			if(rightCaret == buffer.size())
+				res.right = res.right.append("dyn.caret.end.document");
+			else if(rightCaret == buffer.eol(buffer.convert(rightCaret).line))
+				res.right = res.right.append("dyn.caret.end.line");
+		}
+
+		if(not_empty(buffer, selection))
+		{
+			res.left  = res.left.append("dyn.selection");
+			res.right = res.right.append("dyn.selection");
 		}
 
 		return res;
@@ -1067,7 +1115,7 @@ namespace ng
 		std::map< range_t, std::map<std::string, std::string> > res;
 
 		OnigOptionType ptrnOptions = ONIG_OPTION_NONE;
-		if(options && find::ignore_case)
+		if(options & find::ignore_case)
 			ptrnOptions |= ONIG_OPTION_IGNORECASE;
 
 		std::string str = buffer.substr(0, buffer.size());
@@ -1083,7 +1131,7 @@ namespace ng
 		if(searchFor == NULL_STR || searchFor == "")
 			return res;
 
-		if(selection.size() == 1 && (options & (find::regular_expression|find::wrap_around|find::all_matches)) == find::regular_expression)
+		if(selection.size() == 1 && (options & (find::regular_expression|find::wrap_around|find::all_matches|find::extend_selection)) == find::regular_expression)
 		{
 			size_t first = (options & find::backwards) ? selection.last().min().index : selection.last().max().index;
 			size_t last  = (options & find::backwards) ?                            0 :                buffer.size();
@@ -1093,6 +1141,31 @@ namespace ng
 		auto tmp = find_all(buffer, searchFor, options, searchRanges);
 		if(options & find::all_matches)
 			return tmp;
+
+		if(options & find::extend_selection)
+		{
+			ng::index_t anchor(options & find::backwards ? buffer.size() : 0);
+			iterate(range, selection)
+			{
+				anchor = options & find::backwards ? std::min(range->min(), anchor) : std::max(range->max(), anchor);
+				res.insert(std::make_pair(*range, std::map<std::string, std::string>()));
+			}
+
+			if(options & find::backwards)
+			{
+				auto it = tmp.lower_bound(anchor);
+				if(it != tmp.begin())
+					res.insert(*--it);
+			}
+			else
+			{
+				auto it = tmp.upper_bound(anchor);
+				if(it != tmp.end())
+					res.insert(*it);
+			}
+
+			return res;
+		}
 
 		citerate(range, dissect_columnar(buffer, selection))
 		{

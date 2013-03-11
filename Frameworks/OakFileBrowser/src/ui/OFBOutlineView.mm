@@ -5,11 +5,6 @@
 #import <text/utf8.h>
 #import <oak/debug.h>
 #import <oak/oak.h>
-#import <oak/CocoaSTL.h>
-
-@protocol OFBOutlineViewMenuDelegate
-- (NSMenu*)menuForOutlineView:(NSOutlineView*)anOutlineView;
-@end
 
 @protocol FSDataSourceDragSource
 - (void)outlineView:(NSOutlineView*)anOutlineView draggedItems:(NSArray*)someItems endedWithOperation:(NSDragOperation)aDragOperation;
@@ -26,17 +21,11 @@
 @end
 
 @implementation OFBOutlineView
-@synthesize menuDelegate, draggedRows;
-
-- (void)dealloc
-{
-	self.draggedRows = nil;
-	[super dealloc];
-}
+@synthesize draggedRows;
 
 - (void)showContextMenu:(id)sender
 {
-	if(NSMenu* menu = [menuDelegate menuForOutlineView:self])
+	if(NSMenu* menu = [self.menuDelegate menuForOutlineView:self])
 	{
 		NSInteger row = [self selectedRow] != -1 ? [self selectedRow] : 0;
 		NSRect rect = [self convertRect:[self rectOfRow:row] toView:nil];
@@ -62,7 +51,7 @@
 
 - (NSMenu*)menuForEvent:(NSEvent*)theEvent
 {
-	if(!menuDelegate)
+	if(!self.menuDelegate)
 		return [super menuForEvent:theEvent];
 
 	int row = [self rowAtPoint:[self convertPoint:[theEvent locationInWindow] fromView:nil]];
@@ -70,7 +59,7 @@
 		[self selectRowIndexes:[NSIndexSet indexSet] byExtendingSelection:NO];
 	else if(![self.selectedRowIndexes containsIndex:row])
 		[self selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
-	return [menuDelegate menuForOutlineView:self];
+	return [self.menuDelegate menuForOutlineView:self];
 }
 
 // =============================
@@ -106,7 +95,7 @@
 
 - (void)performDoubleClick:(id)sender
 {
-	[[self target] performSelector:[self doubleAction] withObject:self];
+	[NSApp sendAction:[self doubleAction] to:[self target] from:self];
 }
 
 - (void)performEditSelectedRow:(id)sender
@@ -119,21 +108,15 @@
 {
 	static struct key_action_t { std::string key; SEL action; } const KeyActions[] =
 	{
-		{ "@C",                                      @selector(goToComputer:)             },
-		{ "@H",                                      @selector(goToHome:)                 },
-		{ "@D",                                      @selector(goToDesktop:)              },
-		{ "@[",                                      @selector(goBack:)                   },
-		{ "@]",                                      @selector(goForward:)                },
 		{ "@" + utf8::to_s(NSLeftArrowFunctionKey),  @selector(goBack:)                   },
 		{ "@" + utf8::to_s(NSRightArrowFunctionKey), @selector(goForward:)                },
 		{ utf8::to_s(NSCarriageReturnCharacter),     @selector(performEditSelectedRow:)   },
 		{ utf8::to_s(NSEnterCharacter),              @selector(performEditSelectedRow:)   },
 		{ "@" + utf8::to_s(NSDownArrowFunctionKey),  @selector(performDoubleClick:)       },
 		{ "@o",                                      @selector(performDoubleClick:)       },
-		{ "@N",                                      @selector(newFolderInSelectedFolder:)},
 		{ "@d",                                      @selector(duplicateSelectedEntries:) },
 		{ "@G",                                      @selector(orderFrontGoToFolder:)     },
-		{ " ",                                       @selector(quickLookSelectedEntries:) },
+		{ " ",                                       @selector(toggleQuickLookPreview:)   },
 		{ "~\uF705",                                 @selector(showContextMenu:)          },
 	};
 
@@ -162,8 +145,8 @@
 	if(draggedRows && [self.dataSource respondsToSelector:@selector(outlineView:draggedItems:endedWithOperation:)])
 	{
 		NSMutableArray* items = [NSMutableArray array];
-		iterate(index, draggedRows)
-			[items addObject:[self itemAtRow:*index]];
+		for(NSUInteger index = [draggedRows firstIndex]; index != NSNotFound; index = [draggedRows indexGreaterThanIndex:index])
+			[items addObject:[self itemAtRow:index]];
 		[(id <FSDataSourceDragSource>)self.dataSource outlineView:self draggedItems:items endedWithOperation:aDragOperation];
 	}
 	self.draggedRows = nil;
@@ -245,14 +228,10 @@
 		NSRect imageFrame = [[[[self tableColumns] lastObject] dataCell] imageFrameWithFrame:cellFrame inControlView:self];
 		imageFrame.origin.y    = cellFrame.origin.y;
 		imageFrame.size.height = cellFrame.size.height + self.intercellSpacing.height;
-		NSTrackingArea* cursorRect = [[NSTrackingArea alloc] initWithRect:imageFrame options:NSTrackingCursorUpdate|NSTrackingActiveInKeyWindow owner:self userInfo:NULL];
-		[self addTrackingArea:cursorRect];
-		[cursorRect release];
+		[self addTrackingArea:[[NSTrackingArea alloc] initWithRect:imageFrame options:NSTrackingCursorUpdate|NSTrackingActiveInKeyWindow owner:self userInfo:NULL]];
 	}
 
-	NSTrackingArea* trackingArea = [[NSTrackingArea alloc] initWithRect:[self visibleRect] options:NSTrackingMouseMoved|NSTrackingActiveInKeyWindow owner:self userInfo:NULL];
-	[self addTrackingArea:trackingArea];
-	[trackingArea release];
+	[self addTrackingArea:[[NSTrackingArea alloc] initWithRect:[self visibleRect] options:NSTrackingMouseEnteredAndExited|NSTrackingMouseMoved|NSTrackingActiveInKeyWindow owner:self userInfo:NULL]];
 }
 
 // ===============
@@ -279,6 +258,16 @@
 		[self setNeedsDisplayInRect:newHoverRect];
 		mouseHoverRect = newHoverRect;
 	}
+}
+
+- (void)mouseExited:(NSEvent*)anEvent
+{
+	if(!NSEqualRects(mouseHoverRect,  NSZeroRect))
+	{
+		[self setNeedsDisplayInRect:mouseHoverRect];
+		mouseHoverRect =  NSZeroRect;
+	}
+	[super mouseExited:anEvent];
 }
 
 // ========================

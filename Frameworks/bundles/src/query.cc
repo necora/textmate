@@ -1,5 +1,7 @@
 #include "query.h"
 #include <text/ctype.h>
+#include <text/parse.h>
+#include <text/trim.h>
 #include <oak/callbacks.h>
 
 namespace bundles
@@ -187,7 +189,15 @@ namespace bundles
 	{
 		std::string actionClass;
 		if(plist::get_key_path(item->plist(), "content", actionClass))
-			search(kFieldSemanticClass, actionClass, scope, kind, bundle, includeDisabledItems, ordered);
+		{
+			citerate(aClass, text::split(actionClass, "||"))
+			{
+				size_t oldSize = ordered.size();
+				search(kFieldSemanticClass, text::trim(*aClass), scope, kind, bundle, includeDisabledItems, ordered);
+				if(ordered.size() != oldSize)
+					break;
+			}
+		}
 	}
 
  	static void cache_search (std::string const& field, std::string const& value, scope::context_t const& scope, int kind, oak::uuid_t const& bundle, bool includeDisabledItems, std::multimap<double, item_ptr>& ordered)
@@ -224,8 +234,8 @@ namespace bundles
 
  	static void search (std::string const& field, std::string const& value, scope::context_t const& scope, int kind, oak::uuid_t const& bundle, bool includeDisabledItems, std::multimap<double, item_ptr>& ordered)
 	{
-		static std::string CachedFields[] = { kFieldKeyEquivalent, kFieldTabTrigger, kFieldSemanticClass, kFieldGrammarScope, kFieldSettingName };
-		if(!includeDisabledItems && !bundle && oak::contains(beginof(CachedFields), endof(CachedFields), field))
+		static auto const CachedFields = new std::set<std::string>{ kFieldKeyEquivalent, kFieldTabTrigger, kFieldSemanticClass, kFieldGrammarScope, kFieldSettingName };
+		if(!includeDisabledItems && !bundle && CachedFields->find(field) != CachedFields->end())
 				cache_search(field, value, scope, kind, bundle, includeDisabledItems, ordered);
 		else	linear_search(field, value, scope, kind, bundle, includeDisabledItems, ordered);
 	}
@@ -239,6 +249,21 @@ namespace bundles
 		for(std::multimap<double, item_ptr>::reverse_iterator it = ordered.rbegin(); it != ordered.rend() && (!filter || it->first == ordered.rbegin()->first); ++it)
 			res.push_back(it->second);
 		return res;
+	}
+
+	std::vector<item_ptr> items_for_proxy (item_ptr proxyItem, scope::context_t const& scope, int kind, oak::uuid_t const& bundle, bool filter, bool includeDisabledItems)
+	{
+		std::string actionClass;
+		if(plist::get_key_path(proxyItem->plist(), "content", actionClass))
+		{
+			citerate(aClass, text::split(actionClass, "||"))
+			{
+				auto const res = query(kFieldSemanticClass, text::trim(*aClass), scope, kind, bundle, filter, includeDisabledItems);
+				if(!res.empty())
+					return res;
+			}
+		}
+		return std::vector<item_ptr>();
 	}
 
 	item_ptr lookup (oak::uuid_t const& uuid)
@@ -260,6 +285,60 @@ namespace bundles
 				continue;
 			res.push_back(*item);
 		}
+		return res;
+	}
+
+	static std::string format_bundle_item_title (std::string title, bool hasSelection)
+	{
+		static std::string const kSelectionSubString = " / Selection";
+
+		std::string::size_type pos = title.find(kSelectionSubString);
+		if(pos == 0 || pos == std::string::npos)
+			return title;
+
+		if(hasSelection)
+		{
+			std::string::size_type from = title.rfind(' ', pos - 1);
+			if(from == std::string::npos)
+				return title.erase(0, pos + 3);
+			return title.erase(from + 1, pos + 3 - from - 1);
+		}
+		return title.erase(pos, kSelectionSubString.size());
+	}
+
+	std::string name_with_selection (item_ptr const& item, bool hasSelection)
+	{
+		return format_bundle_item_title(item->name(), hasSelection);
+	}
+
+	std::string full_name_with_selection (item_ptr const& item, bool hasSelection)
+	{
+		return format_bundle_item_title(item->full_name(), hasSelection);
+	}
+
+	std::string key_equivalent (item_ptr const& item)
+	{
+		std::string const res = item->value_for_field(kFieldKeyEquivalent);
+		if(res != NULL_STR || item->kind() == kItemTypeProxy)
+			return res;
+
+		std::string const sClass = item->value_for_field(kFieldSemanticClass);
+		if(sClass == NULL_STR)
+			return res;
+
+		iterate(proxyItem, AllItems)
+		{
+			if((*proxyItem)->kind() != kItemTypeProxy)
+				continue;
+
+			std::string actionClass;
+			if(plist::get_key_path((*proxyItem)->plist(), "content", actionClass))
+			{
+				if(sClass.find(actionClass) == 0)
+					return key_equivalent(*proxyItem);
+			}
+		}
+
 		return res;
 	}
 

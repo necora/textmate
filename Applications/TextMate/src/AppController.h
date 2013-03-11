@@ -1,7 +1,3 @@
-extern NSString* const OakSessionDidChangeNotification;
-
-@class OakFilterWindowController;
-
 namespace find_tags
 {
 	enum
@@ -29,7 +25,6 @@ namespace find_tags
 		BOOL all_scopes;
 		int search_type;
 	} bundleItemSearch;
-	OakFilterWindowController* filterWindowController;
 }
 
 - (IBAction)orderFrontFindPanel:(id)sender;
@@ -44,14 +39,11 @@ namespace find_tags
 
 - (IBAction)newDocumentAndActivate:(id)sender;
 - (IBAction)openDocumentAndActivate:(id)sender;
-
-- (void)setup;
 @end
 
 @interface AppController (Documents)
 - (void)newDocument:(id)sender;
 - (void)openDocument:(id)sender;
-- (BOOL)loadSession:(id)sender;
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender;
 @end
 

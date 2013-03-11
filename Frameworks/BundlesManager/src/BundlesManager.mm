@@ -3,7 +3,10 @@
 #import <network/network.h>
 #import <oak/server.h>
 
+NSString* const kUserDefaultsDisableBundleUpdatesKey       = @"disableBundleUpdates";
+NSString* const kUserDefaultsLastBundleUpdateCheckKey      = @"lastBundleUpdateCheck";
 NSString* const BundlesManagerBundlesDidChangeNotification = @"BundlesManagerBundlesDidChangeNotification";
+
 static std::string const kInstallDirectory = NULL_STR;
 
 @interface BundlesManager ()
@@ -11,11 +14,14 @@ static std::string const kInstallDirectory = NULL_STR;
 @property (nonatomic, retain) NSString* activityText;
 @property (nonatomic, assign) double    progress;
 @property (atomic, retain)    NSString* threadActivityText;
-@property (atomic, assign)    double    threadProgress;
+@property (nonatomic, assign) double    threadProgress;
 @property (nonatomic, retain) NSTimer*  progressTimer;
 
 - (void)didStartThreadActivity:(id)sender;
 - (void)didFinishActivityForSources:(std::vector<bundles_db::source_ptr> const&)someSources bundles:(std::vector<bundles_db::bundle_ptr> const&)someBundles;
+
+- (void)updateSources:(id)sender;
+- (void)updateBundles:(id)sender;
 @end
 
 namespace
@@ -65,40 +71,38 @@ namespace
 
 	bool background_task_t::handle_request (request_t const& request)
 	{
-		NSAutoreleasePool* pool = [NSAutoreleasePool new];
+		@autoreleasepool {
+			std::vector<bundles_db::source_ptr> const& sources = request.sources;
+			std::vector<bundles_db::bundle_ptr> const& bundles = request.bundles;
+			BundlesManager* self = request.bundles_manager;
 
-		std::vector<bundles_db::source_ptr> const& sources = request.sources;
-		std::vector<bundles_db::bundle_ptr> const& bundles = request.bundles;
-		BundlesManager* self = request.bundles_manager;
+			for(size_t i = 0; i < sources.size(); ++i)
+			{
+				self.threadProgress     = i / (double)sources.size();
+				self.threadActivityText = [NSString stringWithFormat:@"Updating ‘%s’…", sources[i]->name().c_str()];
+				bundles_db::update(sources[i], request.thread_progress, i / (double)sources.size(), (i + 1) / (double)sources.size());
+			}
 
-		for(size_t i = 0; i < sources.size(); ++i)
-		{
-			self.threadProgress     = i / (double)sources.size();
-			self.threadActivityText = [NSString stringWithFormat:@"Updating ‘%s’…", sources[i]->name().c_str()];
-			bundles_db::update(sources[i], request.thread_progress, i / (double)sources.size(), (i + 1) / (double)sources.size());
+			double totalSize = 0;
+			iterate(bundle, bundles)
+				totalSize += (*bundle)->size();
+
+			for(size_t size = 0, i = 0; i < bundles.size(); ++i)
+			{
+				self.threadProgress     = size / totalSize;
+				self.threadActivityText = [NSString stringWithFormat:@"%@Installing ‘%s’…", (bundles.size() > 1 ? [NSString stringWithFormat:@"%zu/%zu: ", i+1, bundles.size()] : @""), bundles[i]->name().c_str()];
+				bundles_db::update(bundles[i], kInstallDirectory, request.thread_progress, size / totalSize, (size + bundles[i]->size()) / totalSize);
+				size += bundles[i]->size();
+			}
+
+			self.threadProgress = 1;
+			if(bundles.size() == 0)
+				self.threadActivityText = @"";
+			else if(bundles.size() == 1)
+				self.threadActivityText = [NSString stringWithFormat:@"Installed ‘%s’.", bundles.back()->name().c_str()];
+			else
+				self.threadActivityText = [NSString stringWithFormat:@"Installed %zu bundles.", bundles.size()];
 		}
-
-		double totalSize = 0;
-		iterate(bundle, bundles)
-			totalSize += (*bundle)->size();
-
-		for(size_t size = 0, i = 0; i < bundles.size(); ++i)
-		{
-			self.threadProgress     = size / totalSize;
-			self.threadActivityText = [NSString stringWithFormat:@"%@Installing ‘%s’…", (bundles.size() > 1 ? [NSString stringWithFormat:@"%zu/%zu: ", i+1, bundles.size()] : @""), bundles[i]->name().c_str()];
-			bundles_db::update(bundles[i], kInstallDirectory, request.thread_progress, size / totalSize, (size + bundles[i]->size()) / totalSize);
-			size += bundles[i]->size();
-		}
-
-		self.threadProgress = 1;
-		if(bundles.size() == 0)
-			self.threadActivityText = @"";
-		else if(bundles.size() == 1)
-			self.threadActivityText = [NSString stringWithFormat:@"Installed ‘%s’.", bundles.back()->name().c_str()];
-		else
-			self.threadActivityText = [NSString stringWithFormat:@"Installed %zu bundles.", bundles.size()];
-
-		[pool drain];
 		return true;
 	}
 
@@ -111,27 +115,31 @@ namespace
 static BundlesManager* SharedInstance;
 
 @implementation BundlesManager
-@synthesize isBusy, activityText, progress;
-@synthesize threadActivityText, threadProgress, progressTimer;
+{
+	std::vector<bundles_db::source_ptr> sourceList;
+	std::vector<bundles_db::bundle_ptr> bundlesIndex;
+
+	NSUInteger scheduledTasks;
+	std::set<oak::uuid_t> installing;
+}
 
 + (BundlesManager*)sharedInstance
 {
-	return SharedInstance ?: [[self new] autorelease];
+	return SharedInstance ?: [self new];
 }
 
 - (id)init
 {
 	if(SharedInstance)
 	{
-		[self release];
 	}
-	else if(self = SharedInstance = [[super init] retain])
+	else if(self = SharedInstance = [super init])
 	{
 		sourceList   = bundles_db::sources();
 		bundlesIndex = bundles_db::index(kInstallDirectory);
 
 		[self updateSources:nil];
-		[NSTimer scheduledTimerWithTimeInterval:60*60 target:self selector:@selector(updateSources:) userInfo:nil repeats:YES];
+		[NSTimer scheduledTimerWithTimeInterval:4*60*60 target:self selector:@selector(updateSources:) userInfo:nil repeats:YES];
 	}
 	return SharedInstance;
 }
@@ -156,17 +164,19 @@ static BundlesManager* SharedInstance;
 	if(--scheduledTasks == 0)
 	{
 		[self.progressTimer invalidate];
+		[self updateProgress:nil];
 		self.progressTimer = nil;
+		self.progress      = 0;
 		self.isBusy        = NO;
 
-		[self updateProgress:nil];
 		[self performSelector:@selector(setActivityText:) withObject:nil afterDelay:5];
 	}
 
 	if(!someSources.empty())
 	{
 		bundlesIndex = bundles_db::index(kInstallDirectory);
-		[self updateBundles:nil];
+		if(![[NSUserDefaults standardUserDefaults] boolForKey:kUserDefaultsDisableBundleUpdatesKey])
+			[self updateBundles:nil];
 	}
 	else if(!someBundles.empty())
 	{
@@ -190,15 +200,15 @@ static BundlesManager* SharedInstance;
 
 	if(!sources.empty())
 	{
-		if(network::can_reach_host("updates.textmate.org"))
-			new background_task_t(sources, std::vector<bundles_db::bundle_ptr>(), self, &threadProgress);
+		if(network::can_reach_host("api.textmate.org"))
+			new background_task_t(sources, std::vector<bundles_db::bundle_ptr>(), self, &_threadProgress);
 	}
 	else
 	{
 		NSDate* earliest = [NSDate distantFuture];
 		iterate(source, sourceList)
 		{
-			NSDate* date = [(id)CFDateCreate(kCFAllocatorDefault, (*source)->last_check().value()) autorelease];
+			NSDate* date = (NSDate*)CFBridgingRelease(CFDateCreate(kCFAllocatorDefault, (*source)->last_check().value()));
 			earliest = [date earlierDate:earliest];
 		}
 		self.activityText = [NSString stringWithFormat:@"Last check: %@", [earliest humanReadableTimeElapsed]];
@@ -221,7 +231,7 @@ static BundlesManager* SharedInstance;
 	}
 
 	if(!bundles.empty())
-		new background_task_t(std::vector<bundles_db::source_ptr>(), std::vector<bundles_db::bundle_ptr>(bundles.begin(), bundles.end()), self, &threadProgress);
+		new background_task_t(std::vector<bundles_db::source_ptr>(), std::vector<bundles_db::bundle_ptr>(bundles.begin(), bundles.end()), self, &_threadProgress);
 }
 
 - (void)installBundle:(bundles_db::bundle_ptr const&)aBundle
@@ -239,7 +249,7 @@ static BundlesManager* SharedInstance;
 	if(!bundles.empty())
 	{
 		[[NSNotificationCenter defaultCenter] postNotificationName:BundlesManagerBundlesDidChangeNotification object:self];
-		new background_task_t(std::vector<bundles_db::source_ptr>(), bundles, self, &threadProgress);
+		new background_task_t(std::vector<bundles_db::source_ptr>(), bundles, self, &_threadProgress);
 	}
 }
 

@@ -75,7 +75,7 @@ void OakShowToolTip (NSString* msg, NSPoint location)
 
 - (void)setStringValue:(NSString*)aString
 {
-	D(DBF_OakToolTip, bug("%s\n", [aString UTF8String]););	
+	D(DBF_OakToolTip, bug("%s\n", [aString UTF8String]););
 	ASSERT(aString != nil);
 	[field setStringValue:aString];
 }
@@ -142,8 +142,8 @@ void OakShowToolTip (NSString* msg, NSPoint location)
 	{
 		[NSApp sendEvent:event];
 
-		static NSEventType const orderOutEvents[] = { NSLeftMouseDown, NSRightMouseDown, NSOtherMouseDown, NSKeyDown, NSScrollWheel };
-		if(oak::contains(beginof(orderOutEvents), endof(orderOutEvents), [event type]))
+		static std::set<NSEventType> const orderOutEvents = { NSLeftMouseDown, NSRightMouseDown, NSOtherMouseDown, NSKeyDown, NSScrollWheel };
+		if(orderOutEvents.find([event type]) != orderOutEvents.end())
 		{
 			D(DBF_OakToolTip, bug("close because of key/mouse down event\n"););
 			break;

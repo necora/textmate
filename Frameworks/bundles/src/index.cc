@@ -4,6 +4,7 @@
 #include "query.h" // set_index
 #include <plist/delta.h>
 #include <text/case.h>
+#include <text/format.h>
 #include <regexp/glob.h>
 #include <regexp/format_string.h>
 
@@ -83,21 +84,21 @@ namespace bundles
 
 		iterate(pair, plist)
 		{
-			static std::string const stringKeys[]     = { kFieldName, kFieldKeyEquivalent, kFieldTabTrigger, kFieldScopeSelector, kFieldSemanticClass, kFieldContentMatch, kFieldGrammarFirstLineMatch, kFieldGrammarScope, kFieldGrammarInjectionSelector };
-			static std::string const arrayKeys[]      = { kFieldDropExtension, kFieldGrammarExtension };
-			static std::string const dictionaryKeys[] = { kFieldSettingName };
+			static std::set<std::string> const stringKeys     = { kFieldName, kFieldKeyEquivalent, kFieldTabTrigger, kFieldScopeSelector, kFieldSemanticClass, kFieldContentMatch, kFieldGrammarFirstLineMatch, kFieldGrammarScope, kFieldGrammarInjectionSelector };
+			static std::set<std::string> const arrayKeys      = { kFieldDropExtension, kFieldGrammarExtension };
+			static std::set<std::string> const dictionaryKeys = { kFieldSettingName };
 
 			if(pair->first == kFieldScopeSelector)
 			{
 				if(std::string const* str = boost::get<std::string>(&pair->second))
 					_scope_selector = *str;
 			}
-			else if(oak::contains(beginof(stringKeys), endof(stringKeys), pair->first))
+			else if(stringKeys.find(pair->first) != stringKeys.end())
 			{
 				if(std::string const* str = boost::get<std::string>(&pair->second))
 					_fields.insert(std::make_pair(pair->first, *str));
 			}
-			else if(oak::contains(beginof(arrayKeys), endof(arrayKeys), pair->first))
+			else if(arrayKeys.find(pair->first) != arrayKeys.end())
 			{
 				if(plist::array_t const* array = boost::get<plist::array_t>(&pair->second))
 				{
@@ -108,7 +109,7 @@ namespace bundles
 					}
 				}
 			}
-			else if(oak::contains(beginof(dictionaryKeys), endof(dictionaryKeys), pair->first))
+			else if(dictionaryKeys.find(pair->first) != dictionaryKeys.end())
 			{
 				if(plist::dictionary_t const* dictionary = boost::get<plist::dictionary_t>(&pair->second))
 				{
@@ -126,7 +127,7 @@ namespace bundles
 				std::string name;
 				oak::uuid_t uuid;
 				if(plist::get_key_path(*it, kFieldName, name) && plist::get_key_path(*it, kFieldUUID, uuid))
-					_required_bundles.push_back(required_bundle_t(name, uuid));
+					_required_bundles.emplace_back(name, uuid);
 			}
 		}
 
@@ -478,13 +479,12 @@ namespace bundles
 		private:
 			static plist::dictionary_t prune_dictionary (plist::dictionary_t const& plist)
 			{
-				static std::string const DesiredKeysArray[] = { kFieldName, kFieldKeyEquivalent, kFieldTabTrigger, kFieldScopeSelector, kFieldSemanticClass, kFieldContentMatch, kFieldGrammarFirstLineMatch, kFieldGrammarScope, kFieldGrammarInjectionSelector, kFieldDropExtension, kFieldGrammarExtension, kFieldSettingName, kFieldHideFromUser, kFieldIsDeleted, kFieldIsDisabled, kFieldRequiredItems, kFieldUUID, kFieldMainMenu, kFieldIsDelta, kFieldDeletedItems, kFieldChangedItems };
-				static std::set<std::string> const DesiredKeys(beginof(DesiredKeysArray), endof(DesiredKeysArray));
+				static std::set<std::string> const DesiredKeys = { kFieldName, kFieldKeyEquivalent, kFieldTabTrigger, kFieldScopeSelector, kFieldSemanticClass, kFieldContentMatch, kFieldGrammarFirstLineMatch, kFieldGrammarScope, kFieldGrammarInjectionSelector, kFieldDropExtension, kFieldGrammarExtension, kFieldSettingName, kFieldHideFromUser, kFieldIsDeleted, kFieldIsDisabled, kFieldRequiredItems, kFieldUUID, kFieldMainMenu, kFieldIsDelta, kFieldDeletedItems, kFieldChangedItems };
 
 				plist::dictionary_t res;
 				citerate(pair, plist)
 				{
-					if(DesiredKeys.find(pair->first) == DesiredKeys.end())
+					if(DesiredKeys.find(pair->first) == DesiredKeys.end() && pair->first.find(kFieldSettingName) != 0)
 						continue;
 
 					if(pair->first == kFieldSettingName)
@@ -531,7 +531,7 @@ namespace bundles
 		bool local = true;
 		iterate(path, locations())
 		{
-			std::string const cwd = path::join(*path, "Bundles");
+			std::string cwd = path::join(*path, "Bundles");
 			std::map<std::string, fs::node_t>::const_iterator node = heads.find(cwd);
 			if(node == heads.end() || node->second.type() == fs::node_t::kNodeTypeMissing)
 			{
@@ -539,7 +539,14 @@ namespace bundles
 				continue;
 			}
 
-			citerate(fsBundle, *node->second.entries())
+			fs::node_t bundlesNode = resolve(cwd, node->second, heads);
+			if(bundlesNode.type() != fs::node_t::kNodeTypeDirectory || !bundlesNode.entries())
+			{
+				fprintf(stderr, "*** no bundles for path ‘%s’\n", bundlesNode.real_path(cwd).c_str());
+				continue;
+			}
+
+			citerate(fsBundle, *bundlesNode.entries())
 			{
 				if(text::lowercase(path::extension(fsBundle->name())) != ".tmbundle")
 				{
@@ -677,7 +684,7 @@ namespace bundles
 						std::string const extensions[] = { dirs[i].extension, ".tmDelta", ".plist" };
 						citerate(fsItem, *dirNode.entries())
 						{
-							if(!oak::contains(beginof(extensions), endof(extensions), path::extension(fsItem->name())))
+							if(!oak::contains(std::begin(extensions), std::end(extensions), path::extension(fsItem->name())))
 							{
 								fprintf(stderr, "wrong item type: %s\n", fsItem->name().c_str());
 								continue;
@@ -749,7 +756,7 @@ namespace bundles
 			item_ptr item = items[i];
 			if(deltaItems.find(item->bundle_uuid()) != deltaItems.end())
 			{
-				fprintf(stderr, "Orphaned item: ‘%s’\n", item->name().c_str());
+				fprintf(stderr, "Warning: Bundle item ‘%s’ at path %s has no (non-delta) parent\n", item->name().c_str(), text::join(item->paths(), ", ").c_str());
 				items.erase(items.begin() + i);
 			}
 			else

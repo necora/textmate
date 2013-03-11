@@ -53,9 +53,13 @@ public:
 		jail.set_content("text.y", "text");
 		jail.set_content("text.z", "text");
 
+		path::glob_list_t globs;
+		globs.add_exclude_glob("*.y");
+		globs.add_include_glob("*");
+
 		scan_path_t scanner;
 		scanner.set_string("text");
-		scanner.set_folder_options(folder_scan_settings_t(jail.path(), "*", "*.y"));
+		scanner.set_folder_options(folder_scan_settings_t(jail.path(), globs));
 		run_scanner(scanner);
 
 		scan_path_matches_t matches = scanner.accept_matches();
@@ -85,7 +89,7 @@ public:
 
 		scan_path_t hidden_scanner;
 		hidden_scanner.set_string("text");
-		search.skip_hidden_folders = false;
+		search.globs.add_include_glob(".*", path::kPathItemDirectory);
 		hidden_scanner.set_folder_options(search);
 		run_scanner(hidden_scanner);
 
@@ -157,5 +161,62 @@ public:
 		scan_path_matches_t matches = scanner.accept_matches();
 		TS_ASSERT_EQUALS(matches.size(), 1);
 		TS_ASSERT_EQUALS(scanner.get_scanned_file_count(), 1);
+	}
+
+	void test_file_lf ()
+	{
+		test::jail_t jail;
+		jail.set_content("match", "line 1\nline 2\nline 3\nline 4\n");
+
+		scan_path_t scanner;
+		scanner.set_string("line ");
+		scanner.set_folder_options(folder_scan_settings_t(jail.path()));
+		run_scanner(scanner);
+
+		scan_path_matches_t matches = scanner.accept_matches();
+		TS_ASSERT_EQUALS(matches.size(), 4);
+
+		TS_ASSERT_EQUALS(matches[0].second.range.min().line, 0);
+		TS_ASSERT_EQUALS(matches[1].second.range.min().line, 1);
+		TS_ASSERT_EQUALS(matches[2].second.range.min().line, 2);
+		TS_ASSERT_EQUALS(matches[3].second.range.min().line, 3);
+	}
+
+	void test_file_cr ()
+	{
+		test::jail_t jail;
+		jail.set_content("match", "line 1\rline 2\rline 3\rline 4\r");
+
+		scan_path_t scanner;
+		scanner.set_string("line ");
+		scanner.set_folder_options(folder_scan_settings_t(jail.path()));
+		run_scanner(scanner);
+
+		scan_path_matches_t matches = scanner.accept_matches();
+		TS_ASSERT_EQUALS(matches.size(), 4);
+
+		TS_ASSERT_EQUALS(matches[0].second.range.min().line, 0);
+		TS_ASSERT_EQUALS(matches[1].second.range.min().line, 1);
+		TS_ASSERT_EQUALS(matches[2].second.range.min().line, 2);
+		TS_ASSERT_EQUALS(matches[3].second.range.min().line, 3);
+	}
+
+	void test_file_crlf ()
+	{
+		test::jail_t jail;
+		jail.set_content("match", "line 1\r\nline 2\r\nline 3\r\nline 4\r\n");
+
+		scan_path_t scanner;
+		scanner.set_string("line ");
+		scanner.set_folder_options(folder_scan_settings_t(jail.path()));
+		run_scanner(scanner);
+
+		scan_path_matches_t matches = scanner.accept_matches();
+		TS_ASSERT_EQUALS(matches.size(), 4);
+
+		TS_ASSERT_EQUALS(matches[0].second.range.min().line, 0);
+		TS_ASSERT_EQUALS(matches[1].second.range.min().line, 1);
+		TS_ASSERT_EQUALS(matches[2].second.range.min().line, 2);
+		TS_ASSERT_EQUALS(matches[3].second.range.min().line, 3);
 	}
 };

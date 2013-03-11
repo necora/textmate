@@ -14,16 +14,17 @@
 #include <file/save.h>
 #include <file/encoding.h>
 #include <scope/scope.h>
+#include <regexp/glob.h>
 #include <oak/debug.h>
 
 namespace document
 {
 	struct watch_t;
 	struct document_t;
-	typedef std::tr1::shared_ptr<watch_t>          watch_ptr;
-	typedef std::tr1::shared_ptr<document_t>       document_ptr;
-	typedef std::tr1::shared_ptr<document_t const> document_const_ptr;
-	typedef std::tr1::weak_ptr<document_t>         document_weak_ptr;
+	typedef std::shared_ptr<watch_t>          watch_ptr;
+	typedef std::shared_ptr<document_t>       document_ptr;
+	typedef std::shared_ptr<document_t const> document_const_ptr;
+	typedef std::weak_ptr<document_t>         document_weak_ptr;
 
 	struct PUBLIC open_callback_t : file::open_callback_t
 	{
@@ -34,7 +35,7 @@ namespace document
 		virtual void show_error (std::string const& path, std::string const& message, oak::uuid_t const& filter) { }
 	};
 
-	typedef std::tr1::shared_ptr<open_callback_t> open_callback_ptr;
+	typedef std::shared_ptr<open_callback_t> open_callback_ptr;
 
 	struct PUBLIC save_callback_t : file::save_callback_t
 	{
@@ -43,9 +44,9 @@ namespace document
 		virtual void did_save (std::string const& path, io::bytes_ptr content, std::string const& pathAttributes, encoding::type const& encoding, bool success, std::string const& message, oak::uuid_t const& filter) { }
 	};
 
-	typedef std::tr1::shared_ptr<save_callback_t> save_callback_ptr;
+	typedef std::shared_ptr<save_callback_t> save_callback_ptr;
 
-	struct PUBLIC document_t : std::tr1::enable_shared_from_this<document_t>
+	struct PUBLIC document_t : std::enable_shared_from_this<document_t>
 	{
 		WATCH_LEAKS(document_t);
 
@@ -60,7 +61,7 @@ namespace document
 		// ============================================================
 
 		struct reader_t { virtual io::bytes_ptr next () = 0; virtual ~reader_t () { } };
-		typedef std::tr1::shared_ptr<reader_t> reader_ptr;
+		typedef std::shared_ptr<reader_t> reader_ptr;
 		reader_ptr create_reader () const;
 
 		// ======================================================
@@ -186,7 +187,7 @@ namespace document
 
 				_document->post_load(path, io::bytes_ptr(), std::map<std::string, std::string>(), NULL_STR, NULL_STR, encoding::type());
 				iterate(cb, callbacks)
-					(*cb)->show_error(path, doc, message, filter);				
+					(*cb)->show_error(path, doc, message, filter);
 			}
 
 		private:
@@ -194,7 +195,7 @@ namespace document
 			std::vector<document::open_callback_ptr> _callbacks;
 		};
 
-		typedef std::tr1::shared_ptr<open_callback_wrapper_t> open_callback_wrapper_ptr;
+		typedef std::shared_ptr<open_callback_wrapper_t> open_callback_wrapper_ptr;
 		open_callback_wrapper_ptr _open_callback;
 
 		void post_save (std::string const& path, io::bytes_ptr content, std::string const& pathAttributes, encoding::type const& encoding, bool succes);
@@ -211,6 +212,7 @@ namespace document
 		void try_save (document::save_callback_ptr callback);
 		bool save ();
 		bool backup ();
+		void detach_backup () { _backup_path = NULL_STR; }
 
 		void set_path (std::string const& newPath);
 		void set_virtual_path (std::string const& virtualPath)    { _virtual_path = virtualPath; }
@@ -219,6 +221,7 @@ namespace document
 
 		std::string path () const             { return _path; }
 		std::string virtual_path () const     { return _virtual_path == NULL_STR ? _path : _virtual_path; }
+		std::string custom_name () const      { return _custom_name; }
 		std::string backup_path () const;
 		std::string display_name () const;
 
@@ -246,9 +249,7 @@ namespace document
 		bool is_open () const                 { return _open_count != 0 && !_open_callback; }
 
 		std::string file_type () const;
-		std::string path_attributes () const  { return _path_attributes; }
-		scope::scope_t scope () const         { return file_type() + " " + path_attributes(); }
-		settings_t const settings () const    { return settings_for_path(virtual_path(), scope(), path::parent(_path), identifier(), variables(std::map<std::string, std::string>(), false)); }
+		settings_t const settings () const    { return settings_for_path(virtual_path(), scope(), path::parent(_path), variables(std::map<std::string, std::string>(), false)); }
 
 		std::map<std::string, std::string> variables (std::map<std::string, std::string> map, bool sourceFileSystem = true) const;
 
@@ -266,6 +267,8 @@ namespace document
 		void set_authorization (osx::authorization_t const& auth) { _authorization = auth; }
 
 	private:
+		scope::scope_t scope () const { return file_type() + " " + _path_attributes; }
+
 		void setup_buffer ();
 		void grammar_did_change ();
 
@@ -317,9 +320,9 @@ namespace document
 		mutable std::string _path_attributes;
 		// oak::uuid_t _grammar_uuid;
 
-		std::tr1::shared_ptr<ng::buffer_t> _buffer;
+		std::shared_ptr<ng::buffer_t> _buffer;
 		std::string _pristine_buffer = NULL_STR;
-		std::tr1::shared_ptr<ng::undo_manager_t> _undo_manager;
+		std::shared_ptr<ng::undo_manager_t> _undo_manager;
 		void mark_pristine ();
 
 		// std::string _folder;                   // when there is no path, this value is where the document will likely end up, i.e, used for retrieving settings and default save location
@@ -339,9 +342,8 @@ namespace document
 	};
 
 	PUBLIC document_ptr create (std::string const& path = NULL_STR);
-	PUBLIC document_ptr find (oak::uuid_t const& uuid, bool searchBackups = true);
+	PUBLIC document_ptr find (oak::uuid_t const& uuid, bool searchBackups = false);
 	PUBLIC document_ptr from_content (std::string const& content, std::string const& fileType = NULL_STR);
-	PUBLIC bool is_binary (std::string const& path);
 
 	// ====================
 	// = Document scanner =
@@ -351,7 +353,7 @@ namespace document
 	{
 		WATCH_LEAKS(scanner_t);
 
-		scanner_t (std::string const& path, std::string const& glob = "*", std::string const& excludeGlob = "", bool follow_links = false, bool follow_hidden_folders = false, bool depth_first = false);
+		scanner_t (std::string const& path, path::glob_list_t const& glob, bool follow_links = false, bool depth_first = false, bool includeUntitled = true);
 		~scanner_t ();
 
 		bool is_running () const { return is_running_flag; }
@@ -364,8 +366,9 @@ namespace document
 		std::string get_current_path () const;
 
 	private:
-		std::string path, glob, exclude_glob;
-		bool follow_links, follow_hidden_folders, depth_first;
+		std::string path;
+		path::glob_list_t glob;
+		bool follow_links, depth_first;
 
 		pthread_t thread;
 		mutable pthread_mutex_t mutex;
@@ -379,7 +382,7 @@ namespace document
 		std::set< std::pair<dev_t, ino_t> > seen_paths;
 	};
 
-	typedef std::tr1::shared_ptr<scanner_t> scanner_ptr;
+	typedef std::shared_ptr<scanner_t> scanner_ptr;
 	
 } /* document */
 

@@ -1,6 +1,5 @@
 #import "OakWindowFrameHelper.h"
 #import "NSScreen Additions.h"
-#import <oak/CocoaSTL.h>
 
 OAK_DEBUG_VAR(WindowFrameHelper);
 
@@ -86,14 +85,29 @@ OAK_DEBUG_VAR(WindowFrameHelper);
 // = The Actual Logic =
 // ====================
 
+- (NSRect)windowFrame:(NSWindow*)aWindow
+{
+	if([[aWindow delegate] conformsToProtocol:@protocol(OakWindowFrameHelperDelegate)])
+		return [(id <OakWindowFrameHelperDelegate>)[aWindow delegate] savableWindowFrame];
+	return [aWindow frame];
+}
+
 - (void)snapshotWindowFrame
 {
-	[[NSUserDefaults standardUserDefaults] setObject:NSStringFromRect([window frame]) forKey:self.autosaveName];
+	if((([window styleMask] & NSFullScreenWindowMask) != NSFullScreenWindowMask))
+		[[NSUserDefaults standardUserDefaults] setObject:NSStringFromRect([self windowFrame:window]) forKey:self.autosaveName];
 }
 
 - (BOOL)ignoreWindow:(NSWindow*)aWindow
 {
-	return !([aWindow isVisible] && [[aWindow delegate] isKindOfClass:windowDelegateClass]);
+	if(![aWindow isVisible] || ![aWindow isOnActiveSpace])
+		return YES;
+	if(![[aWindow delegate] isKindOfClass:windowDelegateClass])
+		return YES;
+	if(([aWindow styleMask] & NSFullScreenWindowMask) == NSFullScreenWindowMask)
+		return YES;
+
+	return NO;
 }
 
 - (void)placeAndSizeWindow:(NSWindow*)aWindow
@@ -108,10 +122,10 @@ OAK_DEBUG_VAR(WindowFrameHelper);
 		if([self ignoreWindow:win])
 			continue;
 
-		D(DBF_WindowFrameHelper, bug("window @ %s (%s)\n", [NSStringFromRect([win frame]) UTF8String], [[[[win delegate] class] description] UTF8String]););
-		if(NSMaxY([win frame]) < winYPos)
+		D(DBF_WindowFrameHelper, bug("window @ %s (%s)\n", [NSStringFromRect([self windowFrame:win]) UTF8String], [[[[win delegate] class] description] UTF8String]););
+		if(NSMaxY([self windowFrame:win]) < winYPos)
 		{
-			winYPos = NSMaxY([win frame]);
+			winYPos = NSMaxY([self windowFrame:win]);
 			lowerWin = win;
 		}
 	}
@@ -119,7 +133,7 @@ OAK_DEBUG_VAR(WindowFrameHelper);
 	if(lowerWin)
 	{
 		D(DBF_WindowFrameHelper, bug("cascade window\n"););
-		r = [lowerWin frame];
+		r = [self windowFrame:lowerWin];
 		[aWindow setFrame:r display:NO];
 		r.origin = [aWindow cascadeTopLeftFromPoint:NSMakePoint(NSMinX(r), NSMaxY(r))];
 		r.origin.y -= r.size.height;
@@ -136,7 +150,7 @@ OAK_DEBUG_VAR(WindowFrameHelper);
 				if([self ignoreWindow:win])
 					continue;
 
-				if(NSEqualPoints([win frame].origin, r.origin))
+				if(NSEqualPoints([self windowFrame:win].origin, r.origin))
 					alreadyHasWrappedWindow = true;
 			}
 
@@ -145,7 +159,7 @@ OAK_DEBUG_VAR(WindowFrameHelper);
 				NSWindow* win = [NSApp mainWindow];
 				if([[win delegate] isKindOfClass:windowDelegateClass])
 				{
-					r = [win frame];
+					r = [self windowFrame:win];
 					[aWindow setFrame:r display:NO];
 					r.origin = [aWindow cascadeTopLeftFromPoint:NSMakePoint(NSMinX(r), NSMaxY(r))];
 					r.origin.y -= r.size.height;

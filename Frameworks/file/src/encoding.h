@@ -17,7 +17,7 @@ namespace encoding
 {
 	PUBLIC io::bytes_ptr convert (io::bytes_ptr content, std::string const& from, std::string const& to);
 
-	struct type
+	struct PUBLIC type
 	{
 		type () { }
 		type (std::string const& newlines, std::string const& charset, bool byte_order_mark = false) : _newlines(newlines), _charset(charset), _byte_order_mark(byte_order_mark) { }
@@ -30,11 +30,7 @@ namespace encoding
 		void set_charset (std::string const& charset)   { _charset = charset; _byte_order_mark = charset != kCharsetUTF8 && supports_byte_order_mark(charset); }
 		void set_byte_order_mark (bool flag)            { _byte_order_mark = flag; }
 
-		static bool supports_byte_order_mark (std::string const& charset)
-		{
-			static std::string const Encodings[] = { kCharsetUTF8, kCharsetUTF16BE, kCharsetUTF16LE, kCharsetUTF32BE, kCharsetUTF32LE };
-			return oak::contains(beginof(Encodings), endof(Encodings), charset);
-		}
+		static bool supports_byte_order_mark (std::string const& charset);
 
 	private:
 		std::string _newlines = NULL_STR;

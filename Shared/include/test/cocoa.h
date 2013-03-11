@@ -4,19 +4,6 @@
 #include <text/tokenize.h>
 #include <oak/oak.h>
 
-#if !defined(MAC_OS_X_VERSION_10_6) || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_6)
-enum {
-	NSApplicationActivationPolicyRegular,
-	NSApplicationActivationPolicyAccessory,
-	NSApplicationActivationPolicyProhibited
-};
-typedef NSInteger NSApplicationActivationPolicy;
-
-@interface NSApplication (SnowLeopard)
-- (BOOL)setActivationPolicy:(NSApplicationActivationPolicy)activationPolicy;
-@end
-#endif
-
 static BOOL IsGUITestsEnabled (std::string const& testName)
 {
 	std::set<std::string> tests;
@@ -27,10 +14,8 @@ static BOOL IsGUITestsEnabled (std::string const& testName)
 	return tests.find("all") != tests.end() || tests.find(testName) != tests.end();
 }
 
-static void OakSetupApplicationWithView (NSView* aView, std::string testName = NULL_STR)
+static void OakSetupApplicationWithView (NSResponder* aView, std::string testName = NULL_STR)
 {
-	NSAutoreleasePool* pool = [NSAutoreleasePool new];
-
 	if(testName == NULL_STR)
 	{
 		testName = [[[NSProcessInfo processInfo] processName] UTF8String];
@@ -42,28 +27,36 @@ static void OakSetupApplicationWithView (NSView* aView, std::string testName = N
 		return;
 
 	[NSApplication sharedApplication];
-	if([NSApp respondsToSelector:@selector(setActivationPolicy:)])
-		[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+	[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 	[NSApp activateIgnoringOtherApps:YES];
 
 	NSString* appName = [[NSProcessInfo processInfo] processName];
 	appName = [[[appName componentsSeparatedByString:@"_"] componentsJoinedByString:@" "] capitalizedString];
 
-	NSMenu* appMenu = [[NSMenu new] autorelease];
-	[appMenu addItem:[[[NSMenuItem alloc] initWithTitle:[@"Quit " stringByAppendingString:appName] action:@selector(terminate:) keyEquivalent:@"q"] autorelease]];
+	NSMenu* appMenu = [NSMenu new];
+	[appMenu addItem:[[NSMenuItem alloc] initWithTitle:[@"Quit " stringByAppendingString:appName] action:@selector(terminate:) keyEquivalent:@"q"]];
 
-	NSMenuItem* appMenuItem = [[NSMenuItem new] autorelease];
+	NSMenuItem* appMenuItem = [NSMenuItem new];
 	[appMenuItem setSubmenu:appMenu];
 
-	NSMenu* mainMenu = [[NSMenu new] autorelease];
+	NSMenu* mainMenu = [NSMenu new];
 	[mainMenu addItem:appMenuItem];
 	[NSApp setMainMenu:mainMenu];
 
-	NSRect winRect = [NSWindow frameRectForContentRect:NSInsetRect([aView bounds], -10, -10) styleMask:NSTitledWindowMask|NSResizableWindowMask];
-	NSWindow* window = [[NSWindow alloc] initWithContentRect:winRect styleMask:NSTitledWindowMask|NSResizableWindowMask backing:NSBackingStoreBuffered defer:NO];
-	[aView setAutoresizingMask:NSViewWidthSizable|NSViewHeightSizable];
-	[aView setFrame:NSInsetRect([[window contentView] bounds], 10, 10)];
-	[[window contentView] addSubview:aView];
+	NSWindow* window = nil;
+	if([aView isKindOfClass:[NSWindow class]])
+	{
+		window = (NSWindow*)aView;
+	}
+	else if([aView isKindOfClass:[NSView class]])
+	{
+		NSView* view = (NSView*)aView;
+		NSRect winRect = [NSWindow frameRectForContentRect:NSInsetRect([view bounds], -10, -10) styleMask:NSTitledWindowMask|NSResizableWindowMask];
+		window = [[NSWindow alloc] initWithContentRect:winRect styleMask:NSTitledWindowMask|NSResizableWindowMask backing:NSBackingStoreBuffered defer:NO];
+		[view setAutoresizingMask:NSViewWidthSizable|NSViewHeightSizable];
+		[view setFrame:NSInsetRect([[window contentView] bounds], 10, 10)];
+		[[window contentView] addSubview:view];
+	}
 
 	[window cascadeTopLeftFromPoint:NSMakePoint(20, 20)];
 	[window setTitle:appName];
@@ -71,7 +64,6 @@ static void OakSetupApplicationWithView (NSView* aView, std::string testName = N
 	[window makeKeyAndOrderFront:nil];
 
 	[NSApp run];
-	[pool drain];
 }
 
 #endif /* end of include guard: COCOA_P0XQO9KO */

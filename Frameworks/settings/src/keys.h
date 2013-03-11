@@ -20,6 +20,8 @@ PUBLIC extern std::string const kSettingsShowWrapColumnKey;
 PUBLIC extern std::string const kSettingsShowInvisiblesKey;
 
 PUBLIC extern std::string const kSettingsProjectDirectoryKey;
+PUBLIC extern std::string const kSettingsSCMStatusKey;
+PUBLIC extern std::string const kSettingsFileBrowserDocumentStatusKey;
 PUBLIC extern std::string const kSettingsWindowTitleKey;
 PUBLIC extern std::string const kSettingsScopeAttributesKey;
 
@@ -38,13 +40,17 @@ PUBLIC extern std::string const kSettingsIncludeFilesInFileChooserKey;
 PUBLIC extern std::string const kSettingsIncludeInBrowserKey;
 PUBLIC extern std::string const kSettingsIncludeInFileChooserKey;
 
-PUBLIC extern std::string const kSettingsExcludeKey;
-PUBLIC extern std::string const kSettingsExcludeDirectoriesKey;
 PUBLIC extern std::string const kSettingsExcludeDirectoriesInBrowserKey;
-PUBLIC extern std::string const kSettingsExcludeFilesKey;
+PUBLIC extern std::string const kSettingsExcludeDirectoriesInFileChooserKey;
+PUBLIC extern std::string const kSettingsExcludeDirectoriesInFolderSearchKey;
+PUBLIC extern std::string const kSettingsExcludeDirectoriesKey;
 PUBLIC extern std::string const kSettingsExcludeFilesInBrowserKey;
+PUBLIC extern std::string const kSettingsExcludeFilesInFileChooserKey;
+PUBLIC extern std::string const kSettingsExcludeFilesInFolderSearchKey;
+PUBLIC extern std::string const kSettingsExcludeFilesKey;
 PUBLIC extern std::string const kSettingsExcludeInBrowserKey;
 PUBLIC extern std::string const kSettingsExcludeInFileChooserKey;
 PUBLIC extern std::string const kSettingsExcludeInFolderSearchKey;
+PUBLIC extern std::string const kSettingsExcludeKey;
 
 #endif /* end of include guard: SETTINGS_KEYS_H_7IGXFQJ6 */

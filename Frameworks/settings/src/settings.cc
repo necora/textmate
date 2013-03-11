@@ -3,7 +3,6 @@
 #include "track_paths.h"
 #include <OakSystem/application.h>
 #include <plist/plist.h>
-#include <plist/uuid.h>
 #include <oak/oak.h>
 #include <regexp/format_string.h>
 #include <regexp/glob.h>
@@ -11,6 +10,7 @@
 #include <text/format.h>
 #include <oak/debug.h>
 #include <io/io.h>
+#include <cf/cf.h>
 
 OAK_DEBUG_VAR(Settings);
 
@@ -39,8 +39,9 @@ namespace
 				res.push_back(std::make_pair(*key, value));
 		}
 
-		res.push_back(std::make_pair("TM_PID", text::format("%d", getpid())));
-		res.push_back(std::make_pair("TM_FULLNAME", getpwuid(getuid())->pw_gecos ?: "John Doe"));
+		res.push_back(std::make_pair("TM_PID", std::to_string(getpid())));
+		res.push_back(std::make_pair("TM_FULLNAME", path::passwd_entry()->pw_gecos ?: "John Doe"));
+		res.push_back(std::make_pair("TM_APP_IDENTIFIER", cf::to_s(CFBundleGetIdentifier(CFBundleGetMainBundle()))));
 		citerate(pair, oak::basic_environment())
 			res.push_back(*pair);
 
@@ -90,7 +91,7 @@ namespace
 		static std::string const RootScopes[] = { "text", "source", "attr" };
 		iterate(scope, RootScopes)
 		{
-			if(str.find(*scope) == 0 && (str.size() == scope->size() || str[scope->size()] == '.' || str[scope->size()] == ' '))
+			if(str.find(*scope) == 0 && (str.size() == scope->size() || str.find_first_of("., ", scope->size()) == scope->size()))
 				return true;
 		}
 		return str == "";
@@ -99,6 +100,12 @@ namespace
 	struct section_t
 	{
 		section_t (path::glob_t const& fileGlob, scope::selector_t const& scopeSelector, std::vector< std::pair<std::string, std::string> > const& variables) : file_glob(fileGlob), scope_selector(scopeSelector), variables(variables) { }
+		section_t (std::vector< std::pair<std::string, std::string> > const& variables) : section_t("", scope::selector_t(), variables) { }
+		section_t (path::glob_t const& fileGlob, std::vector< std::pair<std::string, std::string> > const& variables) : section_t(fileGlob, scope::selector_t(), variables) { has_file_glob = true; }
+		section_t (scope::selector_t const& scopeSelector, std::vector< std::pair<std::string, std::string> > const& variables) : section_t("", scopeSelector, variables) { has_scope_selector = true; }
+
+		bool has_file_glob      = false;
+		bool has_scope_selector = false;
 
 		path::glob_t                                       file_glob;
 		scope::selector_t                                  scope_selector;
@@ -116,20 +123,26 @@ namespace
 		iterate(section, iniFile.sections)
 		{
 			std::vector< std::pair<std::string, std::string> > variables;
-			variables.push_back(std::make_pair("CWD", path::parent(path)));
+			if(section->names.empty())
+			{
+				variables.push_back(std::make_pair("CWD", path::parent(path)));
+				variables.push_back(std::make_pair("TM_PROPERTIES_PATH", text::format("%s${TM_PROPERTIES_PATH:+:$TM_PROPERTIES_PATH}", path.c_str())));
+			}
+
 			iterate(pair, section->values)
 				variables.push_back(std::make_pair(pair->name, pair->value));
 
 			if(section->names.empty())
 			{
-				res.push_back(section_t("{,.}*", scope::selector_t(), variables));
+				res.emplace_back(variables);
 			}
 			else
 			{
 				iterate(name, section->names)
 				{
-					bool scope = is_scope_selector(*name);
-					res.push_back(section_t(scope ? "{,.}*" : *name, scope ? *name : scope::selector_t(), variables));
+					if(is_scope_selector(*name))
+							res.emplace_back(scope::selector_t(*name), variables);
+					else	res.emplace_back(path::glob_t(*name), variables);
 				}
 			}
 		}
@@ -168,16 +181,29 @@ namespace
 		static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 		pthread_mutex_lock(&mutex);
 
+		std::multimap<double, std::vector<section_t>::const_iterator> orderScopeMatches;
 		citerate(file, paths(directory))
 		{
 			citerate(section, sections(*file))
 			{
-				if(section->file_glob.does_match(path) && section->scope_selector.does_match(scope))
+				if(section->has_scope_selector)
+				{
+					double rank = 0;
+					if(section->scope_selector.does_match(scope, &rank))
+						orderScopeMatches.insert(std::make_pair(rank, section));
+				}
+				else if(!section->has_file_glob || section->file_glob.does_match(path == NULL_STR ? directory : path))
 				{
 					iterate(pair, section->variables)
 						expand_variable(pair->first, pair->second, variables);
 				}
 			}
+		}
+
+		iterate(section, orderScopeMatches)
+		{
+			iterate(pair, section->second->variables)
+				expand_variable(pair->first, pair->second, variables);
 		}
 
 		pthread_mutex_unlock(&mutex);
@@ -197,7 +223,7 @@ void settings_t::set_global_settings_path (std::string const& path)
 	global_settings_path() = path;
 }
 
-settings_t settings_for_path (std::string const& path, scope::scope_t const& scope, std::string const& directory, oak::uuid_t const& uuid, std::map<std::string, std::string> variables)
+settings_t settings_for_path (std::string const& path, scope::scope_t const& scope, std::string const& directory, std::map<std::string, std::string> variables)
 {
 	return expanded_variables_for(directory != NULL_STR ? directory : (path != NULL_STR ? path::parent(path) : path::home()), path, scope, variables);
 }
@@ -316,6 +342,9 @@ void settings_t::set (std::string const& key, std::string const& value, std::str
 			auto defaultsSection = defaults.find(section->first);
 			iterate(pair, section->second)
 			{
+				if(pair->second == NULL_STR)
+					continue;
+
 				if(defaultsSection != defaults.end())
 				{
 					auto it = defaultsSection->second.find(pair->first);

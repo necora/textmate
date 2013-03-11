@@ -1,23 +1,10 @@
 #import "NSSavePanel Additions.h"
 #import <OakFoundation/NSString Additions.h>
-#import <OakFoundation/OakFoundation.h>
-
-@implementation NSSavePanel (DeselectExtension)
-- (void)deselectExtension
-{
-	NSTextView* tw = (NSTextView*)self.firstResponder;
-	if([tw isKindOfClass:[NSTextView class]])
-	{
-		NSString* str = [tw.textStorage.string stringByDeletingPathExtensions];
-		[tw setSelectedRange:NSMakeRange(0, str.length)];
-	}
-}
-@end
 
 @implementation NSSavePanel (HiddenFiles)
 + (void)initialize
 {
-	[[NSUserDefaults standardUserDefaults] registerDefaults:@{ @"NSOpenPanelShowHiddenFiles" : NO_obj }];
+	[[NSUserDefaults standardUserDefaults] registerDefaults:@{ @"NSOpenPanelShowHiddenFiles" : @NO }];
 }
 
 - (void)setShowsHiddenFilesCheckBox:(BOOL)flag

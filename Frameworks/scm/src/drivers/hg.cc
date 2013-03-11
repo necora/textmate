@@ -12,7 +12,7 @@ static scm::status::type parse_status_flag (char flag)
 	{
 		{ scm::status::unversioned, '?' },
 		{ scm::status::ignored,     'I' },
-		{ scm::status::versioned,   'C' },
+		{ scm::status::none,        'C' },
 		{ scm::status::modified,    'M' },
 		{ scm::status::added,       'A' },
 		{ scm::status::deleted,     'R' },
@@ -26,7 +26,7 @@ static scm::status::type parse_status_flag (char flag)
 	}
 
 	ASSERT_EQ(flag, '\0'); // we use ‘flag’ in the assertion to output the unrecognized status flag
-	return scm::status::none;
+	return scm::status::unknown;
 }
 
 static void parse_status_output (scm::status_map_t& entries, std::string const& output)
@@ -59,6 +59,8 @@ namespace scm
 	struct hg_driver_t : driver_t
 	{
 		hg_driver_t () : driver_t("hg", "%s/.hg", "hg") { }
+
+		bool may_touch_filesystem () const { return true; }
 
 		std::string branch_name (std::string const& wcPath) const
 		{

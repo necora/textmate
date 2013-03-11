@@ -68,7 +68,7 @@ struct socket_callback_t
 		(*(helper_base_t*)info)();
 	}
 
-private:	
+private:
 	struct helper_base_t
 	{
 		WATCH_LEAKS(helper_base_t);
@@ -88,14 +88,14 @@ private:
 		socket_callback_t* parent;
 	};
 
-	typedef std::tr1::shared_ptr<helper_base_t> helper_ptr;
+	typedef std::shared_ptr<helper_base_t> helper_ptr;
 
 	helper_ptr helper;
 	CFSocketRef socket;
 	CFRunLoopSourceRef run_loop_source;
 };
 
-typedef std::tr1::shared_ptr<socket_callback_t> socket_callback_ptr;
+typedef std::shared_ptr<socket_callback_t> socket_callback_ptr;
 
 // ======================
 // = Return system info =
@@ -198,7 +198,7 @@ void setup_rmate_server (bool enabled, uint32_t ip, uint16_t port)
 {
 	static mate_server_t mate_server;
 
-	static std::tr1::shared_ptr<rmate_server_t> rmate_server;
+	static std::shared_ptr<rmate_server_t> rmate_server;
 	if(!enabled || !rmate_server || ip != rmate_server->ip() || port != rmate_server->port())
 	{
 		rmate_server.reset();
@@ -224,7 +224,7 @@ private:
 	std::string path;
 };
 
-typedef std::tr1::shared_ptr<temp_file_t> temp_file_ptr;
+typedef std::shared_ptr<temp_file_t> temp_file_ptr;
 
 struct record_t
 {
@@ -360,7 +360,7 @@ namespace // wrap in anonymous namespace to avoid clashing with other callbacks 
 		WATCH_LEAKS(reactivate_callback_t);
 
 		struct helper_t { helper_t () : open_documents(0) { } size_t open_documents; WATCH_LEAKS(reactivate_callback_t); };
-		typedef std::tr1::shared_ptr<helper_t> helper_ptr;
+		typedef std::shared_ptr<helper_t> helper_ptr;
 
 		reactivate_callback_t () : helper(helper_ptr(new helper_t))
 		{
@@ -468,7 +468,7 @@ struct socket_observer_t
 				}
 				else
 				{
-					records.push_back(record_t(str));
+					records.emplace_back(str);
 					state = arguments;
 				}
 				D(DBF_RMateServer, bug("Got command ‘%s’\n", str.c_str()););
@@ -560,6 +560,9 @@ struct socket_observer_t
 			if(!args["selection"].empty())
 				doc->set_selection(args["selection"]);
 
+			if(args["add-to-recents"] != "yes")
+				doc->set_recent_tracking(false);
+
 			if(wait || writeBackOnSave || writeBackOnClose)
 				doc->add_callback(new save_close_callback_t(doc->path(), socket, writeBackOnSave, writeBackOnClose, token));
 
@@ -571,7 +574,6 @@ struct socket_observer_t
 
 			// std::string folder;         // when there is no path we still may provide a default folder
 			// enum fallback_t { must_share_path, should_share_path, frontmost, create_new } project_fallback;
-			// bool add_to_recents;
 			// bool bring_to_front;
 
 			if(args.find("authorization") != args.end())

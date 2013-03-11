@@ -3,55 +3,73 @@
 
 #include <bundles/bundles.h>
 #include <scope/scope.h>
-#include <cf/color.h>
 
-typedef std::tr1::shared_ptr<struct __CTFont const> CTFontPtr;
+typedef std::shared_ptr<struct __CTFont const> CTFontPtr;
+typedef std::shared_ptr<struct CGColor> CGColorPtr;
 
 struct PUBLIC styles_t
 {
-	styles_t (cf::color_t const& foreground, cf::color_t const& background, cf::color_t const& gutterForeground, cf::color_t const& gutterBackground, cf::color_t const& gutterIcons, cf::color_t const& gutterDivider, cf::color_t const& gutterSelectionForeground, cf::color_t const& gutterSelectionBackground, cf::color_t const& gutterSelectionIcons, cf::color_t const& gutterSelectionBorder, cf::color_t const& selection, cf::color_t const& caret, CTFontPtr font, bool underlined, bool misspelled) : _foreground(foreground), _background(background), _gutterForeground(gutterForeground), _gutterBackground(gutterBackground), _gutterIcons(gutterIcons), _gutterDivider(gutterDivider), _gutterSelectionForeground(gutterSelectionForeground), _gutterSelectionBackground(gutterSelectionBackground), _gutterSelectionIcons(gutterSelectionIcons), _gutterSelectionBorder(gutterSelectionBorder), _selection(selection), _caret(caret), _font(font), _underlined(underlined), _misspelled(misspelled) { }
+	styles_t (CGColorPtr foreground, CGColorPtr background, CGColorPtr caret, CGColorPtr selection, CTFontPtr font, bool underlined, bool misspelled) : _foreground(foreground), _background(background), _caret(caret), _selection(selection), _font(font), _underlined(underlined), _misspelled(misspelled) { }
 
-	CGColorRef foreground () const               { return _foreground; }
-	CGColorRef background () const               { return _background; }
-	CGColorRef gutterForeground () const         { return _gutterForeground; }
-	CGColorRef gutterBackground () const         { return _gutterBackground; }
-	CGColorRef gutterIcons() const               { return _gutterIcons; }
-	CGColorRef gutterDivider () const            { return _gutterDivider; }
-	CGColorRef gutterSelectionForeground() const { return _gutterSelectionForeground; }
-	CGColorRef gutterSelectionBackground() const { return _gutterSelectionBackground; }
-	CGColorRef gutterSelectionIcons() const      { return _gutterSelectionIcons; }
-	CGColorRef gutterSelectionBorder() const     { return _gutterSelectionBorder; }
-	CGColorRef caret () const                    { return _caret; }
-	CGColorRef selection () const                { return _selection; }
-	CTFontRef font () const                      { return _font.get(); }
-	bool underlined () const                     { return _underlined; }
-	bool misspelled () const                     { return _misspelled; }
+	CGColorRef foreground () const { return _foreground.get(); }
+	CGColorRef background () const { return _background.get(); }
+	CGColorRef caret () const      { return _caret.get(); }
+	CGColorRef selection () const  { return _selection.get(); }
+	CTFontRef font () const        { return _font.get(); }
+	bool underlined () const       { return _underlined; }
+	bool misspelled () const       { return _misspelled; }
 
 private:
-	cf::color_t _foreground;
-	cf::color_t _background;
-	cf::color_t _gutterForeground;
-	cf::color_t _gutterBackground;
-	cf::color_t _gutterIcons;
-	cf::color_t _gutterDivider;
-	cf::color_t _gutterSelectionForeground;
-	cf::color_t _gutterSelectionBackground;
-	cf::color_t _gutterSelectionIcons;
-	cf::color_t _gutterSelectionBorder;
-	cf::color_t _selection;
-	cf::color_t _caret;
+	CGColorPtr _foreground;
+	CGColorPtr _background;
+	CGColorPtr _caret;
+	CGColorPtr _selection;
 	CTFontPtr _font;
 	bool _underlined;
 	bool _misspelled;
 };
 
+struct PUBLIC gutter_styles_t
+{
+	gutter_styles_t () { }
+	gutter_styles_t (gutter_styles_t const& rhs) = delete;
+	gutter_styles_t& operator= (gutter_styles_t const& rhs) = delete;
+	~gutter_styles_t ();
+
+	CGColorRef divider               = NULL;
+	CGColorRef selectionBorder       = NULL;
+
+	CGColorRef foreground            = NULL;
+	CGColorRef background            = NULL;
+	CGColorRef icons                 = NULL;
+	CGColorRef iconsHover            = NULL;
+	CGColorRef iconsPressed          = NULL;
+
+	CGColorRef selectionForeground   = NULL;
+	CGColorRef selectionBackground   = NULL;
+	CGColorRef selectionIcons        = NULL;
+	CGColorRef selectionIconsHover   = NULL;
+	CGColorRef selectionIconsPressed = NULL;
+};
+
+struct theme_t;
+typedef std::shared_ptr<theme_t> theme_ptr;
+
 struct PUBLIC theme_t
 {
-	theme_t (bundles::item_ptr const& themeItem);
-	~theme_t ();
+	theme_t (bundles::item_ptr const& themeItem, std::string const& fontName = "Menlo-Regular", CGFloat fontSize = 12);
+
+	theme_ptr copy_with_font_name_and_size (std::string const& fontName, CGFloat fontSize);
 
 	oak::uuid_t const& uuid () const;
-	styles_t const& styles_for_scope (scope::context_t const& scope, std::string fontName, CGFloat fontSize) const;
+	std::string const& font_name () const;
+	CGFloat font_size () const;
+	CGColorRef foreground () const;
+	CGColorRef background (std::string const& fileType = NULL_STR) const;
+	bool is_dark () const;
+	bool is_transparent () const;
+	gutter_styles_t const& gutter_styles () const;
+	styles_t const& styles_for_scope (scope::scope_t const& scope) const;
 
 	struct color_info_t
 	{
@@ -60,8 +78,6 @@ struct PUBLIC theme_t
 
 		bool is_blank () const  { return red < 0; }
 		bool is_opaque () const { return alpha == 1; };
-
-		operator cf::color_t () { ASSERT(!is_blank()); return cf::color_t(red, green, blue, alpha); }
 
 		double red, green, blue, alpha;
 	};
@@ -80,14 +96,6 @@ private:
 		CGFloat font_size;
 		color_info_t foreground;
 		color_info_t background;
-		color_info_t gutterForeground;
-		color_info_t gutterBackground;
-		color_info_t gutterIcons;
-		color_info_t gutterDivider;
-		color_info_t gutterSelectionForeground;
-		color_info_t gutterSelectionBackground;
-		color_info_t gutterSelectionIcons;
-		color_info_t gutterSelectionBorder;
 		color_info_t caret;
 		color_info_t selection;
 		color_info_t invisibles;
@@ -96,29 +104,42 @@ private:
 		bool_t underlined;
 		bool_t misspelled;
 	};
+	static std::vector<decomposed_style_t> global_styles (scope::scope_t const& scope);
 
-	struct callback_t : bundles::callback_t
+	struct shared_styles_t
 	{
-		callback_t (theme_t& theme) : _theme(theme) { }
-		void bundles_did_change ()                  { _theme.setup_styles(); }
-	private:
-		theme_t& _theme;
+		struct callback_t : bundles::callback_t
+		{
+			callback_t (shared_styles_t& theme) : _styles(theme) { }
+			void bundles_did_change ()                  { _styles.setup_styles(); }
+		private:
+			shared_styles_t& _styles;
+		};
+		shared_styles_t (bundles::item_ptr const& themeItem);
+		~shared_styles_t ();
+		void setup_styles ();
+		static decomposed_style_t parse_styles (plist::dictionary_t const& plist);
+
+		bundles::item_ptr _item;
+		CGColorSpaceRef _color_space = NULL;
+		std::vector<decomposed_style_t> _styles;
+		gutter_styles_t _gutter_styles;
+		CGColorPtr _foreground;
+		CGColorPtr _background;
+		bool _is_dark;
+		bool _is_transparent;
+		callback_t _callback;
 	};
-
-	void setup_styles ();
-
-	static decomposed_style_t parse_styles (plist::dictionary_t const& plist);
-	static std::vector<decomposed_style_t> global_styles (scope::context_t const& scope);
-
+	typedef std::shared_ptr<shared_styles_t> shared_styles_ptr;
+	shared_styles_ptr find_shared_styles (bundles::item_ptr const& themeItem);
+	shared_styles_ptr _styles;
 	bundles::item_ptr _item;
-	std::vector<decomposed_style_t> _styles;
-	callback_t _callback;
+	std::string _font_name;
+	CGFloat _font_size;
 
-	typedef boost::tuple<scope::context_t, std::string, CGFloat> key_t; // scope, font name, font size
-	mutable std::map<key_t, styles_t> _cache;
+	mutable std::map<scope::scope_t, styles_t> _cache;
 };
 
-typedef std::tr1::shared_ptr<theme_t> theme_ptr;
 PUBLIC theme_ptr parse_theme (bundles::item_ptr const& themeItem);
 
 #endif /* end of include guard: THEME_H_T0VVCP8F */

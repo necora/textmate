@@ -1,6 +1,10 @@
 #import <oak/debug.h>
 
-@interface OakWindowFrameHelper : NSObject
+@protocol OakWindowFrameHelperDelegate <NSObject>
+- (NSRect)savableWindowFrame;
+@end
+
+PUBLIC @interface OakWindowFrameHelper : NSObject
 {
 	OBJC_WATCH_LEAKS(OakWindowFrameHelper);
 

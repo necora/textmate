@@ -1,109 +1,94 @@
-#import "DocumentOpenHelper.h"
-#import <OakFileBrowser/OakFileBrowser.h>
-#import <OakAppKit/OakTabBarView.h>
-#import <oak/debug.h>
-#import <plist/uuid.h>
+#import <document/document.h>
 #import <command/runner.h>
-#import <scm/scm.h>
 
-@class OakLayoutView;
-@class OakDocumentView;
-@class OakTextView;
-@class OakFilterWindowController;
-@class OakHTMLOutputView;
+PUBLIC @interface DocumentController : NSObject
+@property (nonatomic) NSWindow*                                  window;
 
-struct document_tab_t;
-typedef std::tr1::shared_ptr<document_tab_t> document_tab_ptr;
+@property (nonatomic) NSString*                                  identifier;
+@property (nonatomic) NSString*                                  defaultProjectPath;
+@property (nonatomic, readonly) NSString*                        projectPath; // effectiveProjectPath
 
-namespace bundles { struct item_t; typedef std::tr1::shared_ptr<item_t> item_ptr; }
+@property (nonatomic) std::vector<document::document_ptr> const& documents;
+@property (nonatomic) document::document_ptr              const& selectedDocument;
+@property (nonatomic) NSUInteger                                 selectedTabIndex;
 
-@interface DocumentController : NSWindowController <OakFileBrowserDelegate, OakTabBarViewDelegate, OakTabBarViewDataSource, DocumentOpenHelperDelegate>
-{
-	OBJC_WATCH_LEAKS(DocumentController);
+@property (nonatomic) BOOL                                       fileBrowserVisible;
+@property (nonatomic) NSDictionary*                              fileBrowserHistory;
+@property (nonatomic) CGFloat                                    fileBrowserWidth;
 
-	IBOutlet OakTabBarView* tabBarView;
-	IBOutlet OakLayoutView* layoutView;
+@property (nonatomic) BOOL                                       htmlOutputVisible;
+@property (nonatomic) NSSize                                     htmlOutputSize;
 
-	OakFileBrowser* fileBrowser;
-	OakDocumentView* documentView;
-	OakTextView* textView;
++ (BOOL)restoreSession;
++ (BOOL)saveSessionIncludingUntitledDocuments:(BOOL)includeUntitled;
++ (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender;
 
-	OakHTMLOutputView* htmlOutputView;
-	command::runner_ptr runner;
+- (void)showWindow:(id)sender;
+- (void)openAndSelectDocument:(document::document_ptr const&)aDocument;
+- (void)close;
 
-	BOOL windowHasLoaded;
-
-	BOOL fileBrowserHidden;
-	NSDictionary* fileBrowserState;
-
-	int32_t fileBrowserWidth;
-	int32_t htmlOutputHeight;
-
-	OakFilterWindowController* filterWindowController;
-	NSUInteger fileChooserSourceIndex;
-
-	// =====================
-	// = Document Bindings =
-	// =====================
-
-	NSString* windowTitle;
-	NSString* representedFile;
-	BOOL isDocumentEdited;
-
-	scm::info_ptr scmInfo;
-	scm::callback_t* scmCallback;
-
-	// =================
-	// = Document Tabs =
-	// =================
-
-	oak::uuid_t identifier;
-@public // FIXME
-	std::vector<document_tab_ptr> documentTabs;
-@protected
-	size_t selectedTabIndex;
-
-	oak::uuid_t scratchDocument;
-}
-@property (nonatomic, readonly) NSString* identifier;
-@property (nonatomic, assign) BOOL fileBrowserHidden;
-@property (nonatomic, readonly) NSString* documentPath;
-@property (nonatomic, readonly) NSString* fileBrowserPath;
-@property (nonatomic, readonly) NSString* projectPath;
-@property (nonatomic, readonly) NSString* untitledSavePath;
-
-+ (DocumentController*)controllerForDocument:(document::document_ptr const&)aDocument;
-+ (DocumentController*)controllerForPath:(std::string const&)aPath;
-+ (DocumentController*)controllerForUUID:(oak::uuid_t const&)aUUID;
-
-- (id)init;
+- (IBAction)newFolder:(id)sender;
+- (IBAction)newDocumentInTab:(id)sender;
+- (IBAction)newDocumentInDirectory:(id)sender;
+- (IBAction)moveDocumentToNewWindow:(id)sender; // TODO Move to AppController
+- (IBAction)mergeAllWindows:(id)sender;         // TODO Move to AppController
 
 - (IBAction)goToFileCounterpart:(id)sender;
 - (IBAction)selectNextTab:(id)sender;
 - (IBAction)selectPreviousTab:(id)sender;
 - (IBAction)takeSelectedTabIndexFrom:(id)sender;
 
-- (IBAction)revealFileInProject:(id)sender;
-- (IBAction)toggleFileBrowser:(id)sender;
-
-- (void)performBundleItem:(bundles::item_ptr const&)anItem;
 - (NSPoint)positionForWindowUnderCaret;
-
-- (void)performCloseWindow:(id)sender;
-- (void)performCloseOtherTabs:(id)sender;
-
-- (void)makeTextViewFirstResponder:(id)sender;
-
-- (void)closeTabAtIndex:(NSUInteger)tabIndex;
-- (void)closeDocumentWithPath:(NSString*)aPath;
-
+- (void)performBundleItem:(bundles::item_ptr const&)anItem;
 - (BOOL)setCommandRunner:(command::runner_ptr const&)aRunner;
+- (IBAction)toggleHTMLOutput:(id)sender;
+
+- (IBAction)moveFocus:(id)sender;
+
+- (IBAction)performCloseTab:(id)sender;
+- (IBAction)performCloseSplit:(id)sender;
+- (IBAction)performCloseWindow:(id)sender;
+- (IBAction)performCloseAllTabs:(id)sender;
+- (IBAction)performCloseOtherTabs:(id)sender;
 
 - (IBAction)saveDocument:(id)sender;
 - (IBAction)saveDocumentAs:(id)sender;
 - (IBAction)saveAllDocuments:(id)sender;
-@end
+// - (IBAction)revertDocumentToSaved:(id)sender;
 
-@interface DocumentController (ApplicationTermination)
-- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender;
+// =============================
+// = Opening Auxiliary Windows =
+// =============================
+
+- (IBAction)orderFrontFindPanel:(id)sender;
+- (IBAction)goToFile:(id)sender;
+
+// ==================
+// = OakFileBrowser =
+// ==================
+
+- (IBAction)toggleFileBrowser:(id)sender;
+- (IBAction)revealFileInProject:(id)sender;
+- (IBAction)goToProjectFolder:(id)sender;
+
+- (IBAction)goBack:(id)sender;
+- (IBAction)goForward:(id)sender;
+- (IBAction)goToParentFolder:(id)sender;
+- (IBAction)goToComputer:(id)sender;
+- (IBAction)goToHome:(id)sender;
+- (IBAction)goToDesktop:(id)sender;
+- (IBAction)goToFavorites:(id)sender;
+- (IBAction)goToSCMDataSource:(id)sender;
+- (IBAction)orderFrontGoToFolder:(id)sender;
+
+// ==============
+// = Legacy API =
+// ==============
+
++ (instancetype)controllerForDocument:(document::document_ptr const&)aDocument;
+- (void)updateVariables:(std::map<std::string, std::string>&)env;
+
+// Private (used by DocumentCommand.mm)
+@property (nonatomic, readonly) NSString* scopeAttributes;
+- (NSString*)untitledSavePath;
 @end

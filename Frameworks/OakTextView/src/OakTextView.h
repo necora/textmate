@@ -4,12 +4,13 @@
 #import <buffer/buffer.h>
 #import <theme/theme.h>
 #import <document/document.h>
+#import <oak/debug.h>
 
 extern int32_t const NSWrapColumnWindowWidth;
 extern int32_t const NSWrapColumnAskUser;
 extern NSString* const kUserDefaultsDisableAntiAliasKey;
 
-namespace bundles { struct item_t; typedef std::tr1::shared_ptr<item_t> item_ptr; }
+namespace bundles { struct item_t; typedef std::shared_ptr<item_t> item_ptr; }
 namespace ng      { struct layout_t; }
 
 @class OakTextView;
@@ -20,16 +21,24 @@ struct buffer_refresh_callback_t;
 
 enum folding_state_t { kFoldingNone, kFoldingTop, kFoldingCollapsed, kFoldingBottom };
 
-@interface OakTextView : OakView <NSTextInput, NSTextFieldDelegate>
+@protocol OakTextViewDelegate <NSObject>
+@optional
+- (NSString*)scopeAttributes;
+@end
+
+PUBLIC @interface OakTextView : OakView <NSTextInput, NSTextFieldDelegate>
 {
+	OBJC_WATCH_LEAKS(OakTextView);
+
 	document::document_ptr document;
 	theme_ptr theme;
 	std::string fontName;
 	CGFloat fontSize;
 	BOOL antiAlias;
 	BOOL showInvisibles;
+	BOOL scrollPastEnd;
 	ng::editor_ptr editor;
-	std::tr1::shared_ptr<ng::layout_t> layout;
+	std::shared_ptr<ng::layout_t> layout;
 	NSUInteger refreshNestCount;
 	buffer_refresh_callback_t* callback;
 
@@ -38,9 +47,14 @@ enum folding_state_t { kFoldingNone, kFoldingTop, kFoldingCollapsed, kFoldingBot
 	BOOL hideCaret;
 	NSTimer* blinkCaretTimer;
 
+	NSImage* spellingDotImage;
+	NSImage* foldingDotsImage;
+
 	// =================
 	// = Mouse Support =
 	// =================
+
+	NSCursor* ibeamCursor;
 
 	NSPoint mouseDownPos;
 	ng::index_t mouseDownIndex;
@@ -72,7 +86,6 @@ enum folding_state_t { kFoldingNone, kFoldingTop, kFoldingCollapsed, kFoldingBot
 	// = Incremental Search =
 	// ======================
 
-	NSViewController* liveSearchViewController;
 	NSString* liveSearchString;
 	ng::ranges_t liveSearchAnchor;
 	ng::ranges_t liveSearchRanges;
@@ -84,30 +97,37 @@ enum folding_state_t { kFoldingNone, kFoldingTop, kFoldingCollapsed, kFoldingBot
 	OakChoiceMenu* choiceMenu;
 	std::vector<std::string> choiceVector;
 }
-@property (nonatomic, assign) document::document_ptr const& document;
-@property (nonatomic, assign) theme_ptr const&              theme;
-@property (nonatomic, retain) NSFont*                       font;
-@property (nonatomic, assign) BOOL                          antiAlias;
-@property (nonatomic, assign) size_t                        tabSize;
-@property (nonatomic, assign) BOOL                          showInvisibles;
-@property (nonatomic, assign) BOOL                          softWrap;
-@property (nonatomic, assign) BOOL                          softTabs;
+- (void)setDocument:(document::document_ptr const&)aDocument;
+
+@property (nonatomic, weak) id <OakTextViewDelegate>        delegate;
+@property (nonatomic) theme_ptr const&                      theme;
+@property (nonatomic) NSCursor*                             ibeamCursor;
+@property (nonatomic) NSFont*                               font;
+@property (nonatomic) BOOL                                  antiAlias;
+@property (nonatomic) size_t                                tabSize;
+@property (nonatomic) BOOL                                  showInvisibles;
+@property (nonatomic) BOOL                                  softWrap;
+@property (nonatomic) BOOL                                  scrollPastEnd;
+@property (nonatomic) BOOL                                  softTabs;
+@property (nonatomic, readonly) BOOL                        continuousIndentCorrections;
 
 @property (nonatomic, readonly) BOOL                        hasMultiLineSelection;
-@property (nonatomic, retain) NSString*                     selectionString;
+@property (nonatomic, readonly) BOOL                        hasSelection;
+@property (nonatomic) NSString*                             selectionString;
 
-@property (nonatomic, assign) BOOL                          isMacroRecording;
+@property (nonatomic) BOOL                                  isMacroRecording;
 
 - (GVLineRecord const&)lineRecordForPosition:(CGFloat)yPos;
 - (GVLineRecord const&)lineFragmentForLine:(NSUInteger)aLine column:(NSUInteger)aColumn;
 
 - (NSPoint)positionForWindowUnderCaret;
-- (scope::context_t const&)scope;
+- (scope::context_t const&)scopeContext;
 - (folding_state_t)foldingStateForLine:(NSUInteger)lineNumber;
 
 - (IBAction)toggleMacroRecording:(id)sender;
 - (IBAction)toggleFoldingAtLine:(NSUInteger)lineNumber recursive:(BOOL)flag;
 - (IBAction)toggleShowInvisibles:(id)sender;
+- (IBAction)toggleScrollPastEnd:(id)sender;
 
 - (void)performBundleItem:(bundles::item_ptr const&)anItem;
 @end

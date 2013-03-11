@@ -16,7 +16,7 @@
 // Long line: Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 // No spaces: Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 
-typedef std::tr1::shared_ptr<ng::layout_t> layout_ptr;
+typedef std::shared_ptr<ng::layout_t> layout_ptr;
 
 @interface MyView : NSView
 {
@@ -43,7 +43,7 @@ static void random_insert (ng::buffer_t& dst, std::string const& src)
 	}
 
 	std::vector<size_t> ordering(lengths.size());
-	ext::iota(ordering.begin(), ordering.end(), 0);
+	std::iota(ordering.begin(), ordering.end(), 0);
 	std::random_shuffle(ordering.begin(), ordering.end());
 
 	std::vector<size_t> srcOffsets(lengths.size(), 0);
@@ -133,16 +133,11 @@ private:
 			buffer.set_grammar(*item);
 
 		theme_ptr theme = parse_theme(bundles::lookup("71D40D9D-AE48-11D9-920A-000D93589AF6"));
-		layout.reset(new ng::layout_t(buffer, theme, "Gill Sans", 14, true));
+		theme = theme->copy_with_font_name_and_size("Gill Sans", 14);
+		layout.reset(new ng::layout_t(buffer, theme, true));
 		layout->set_viewport_size([[self enclosingScrollView] documentVisibleRect].size);
 	}
 	return self;
-}
-
-- (void)dealloc
-{
-	[[NSNotificationCenter defaultCenter] removeObserver:self];
-	[super dealloc];
 }
 
 - (BOOL)acceptsFirstResponder
@@ -393,18 +388,16 @@ private:
 
 - (void)rightMouseDown:(NSEvent*)anEvent
 {
-	NSLog(@"%s", SELNAME(_cmd));
+	NSLog(@"%s", sel_getName(_cmd));
 }
 @end
 
-static NSScrollView* CreateTextView (NSRect aRect = NSMakeRect(0, 0, 600, 800))
+static NSScrollView* OakCreateTextView (NSRect aRect = NSMakeRect(0, 0, 600, 800))
 {
-	NSAutoreleasePool* pool = [NSAutoreleasePool new];
-
 	NSScrollView* scrollView = [[NSScrollView alloc] initWithFrame:aRect];
 	NSSize textViewSize = [NSScrollView contentSizeForFrameSize:aRect.size hasHorizontalScroller:NO hasVerticalScroller:YES borderType:NSNoBorder];
 
-	MyView* textView = [[[MyView alloc] initWithFrame:NSMakeRect(0, 0, textViewSize.width, textViewSize.height)] autorelease];
+	MyView* textView = [[MyView alloc] initWithFrame:NSMakeRect(0, 0, textViewSize.width, textViewSize.height)];
 	textView.autoresizingMask = NSViewWidthSizable;
 
 	scrollView.hasVerticalScroller   = YES;
@@ -414,7 +407,6 @@ static NSScrollView* CreateTextView (NSRect aRect = NSMakeRect(0, 0, 600, 800))
 	scrollView.autoresizingMask      = NSViewWidthSizable|NSViewHeightSizable;
 	scrollView.documentView          = textView;
 
-	[pool drain];
 	return scrollView;
 }
 
@@ -434,6 +426,6 @@ class LayoutTests : public CxxTest::TestSuite
 public:
 	void test_layout ()
 	{
-		OakSetupApplicationWithView(CreateTextView());
+		OakSetupApplicationWithView(OakCreateTextView());
 	}
 };

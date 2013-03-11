@@ -4,9 +4,7 @@
 
 #import "OakPasteboard.h"
 #import "OakPasteboardSelector.h"
-#import <oak/CocoaSTL.h>
 #import <oak/oak.h>
-#import <OakFoundation/OakFoundation.h>
 #import <oak/debug.h>
 
 OAK_DEBUG_VAR(Pasteboard);
@@ -83,7 +81,7 @@ NSString* const kUserDefaultsDisablePersistentClipboardHistory = @"disablePersis
 
 	if(!options)
 		options = [[NSMutableDictionary alloc] init];
-	[options setObject:YES_obj forKey:aKey];
+	[options setObject:@YES forKey:aKey];
 }
 
 - (void)setFullWordMatch:(BOOL)flag       { return [self setOption:OakFindFullWordsOption toBoolean:flag]; };
@@ -294,7 +292,7 @@ namespace
 	static NSMutableDictionary* SharedInstances = [NSMutableDictionary new];
 	if(![SharedInstances objectForKey:aName])
 	{
-		[SharedInstances setObject:[[[self alloc] initWithName:aName] autorelease] forKey:aName];
+		[SharedInstances setObject:[[[OakPasteboard alloc] initWithName:aName] autorelease] forKey:aName];
 		if(![aName isEqualToString:NSGeneralPboard])
 			[[SharedInstances objectForKey:aName] setAvoidsDuplicates:YES];
 	}

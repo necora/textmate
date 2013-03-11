@@ -68,6 +68,59 @@ namespace ng
 		return res;
 	}
 
+	template <typename _OutputIter>
+	_OutputIter transpose_selections (buffer_t const& _buffer, ranges_t const& _selections, _OutputIter out)
+	{
+		ranges_t sel;
+		iterate(range, _selections)
+		{
+			size_t from = range->min().index, to = range->max().index;
+			if(from == to)
+			{
+				text::pos_t const& pos = _buffer.convert(from);
+
+				if(from == 0 || from == _buffer.size())
+				{
+				}
+				else if(pos.column == 0)
+				{
+					from = _buffer.begin(pos.line - 1);
+					to = pos.line+1 == _buffer.lines() ? _buffer.size() : _buffer.begin(pos.line + 1);
+				}
+				else if(from == _buffer.eol(pos.line))
+				{
+					from = _buffer.begin(pos.line);
+					to = pos.line+2 == _buffer.lines() ? _buffer.size() : _buffer.begin(pos.line + 2);
+				}
+				else
+				{
+					from = from - _buffer[from-1].size();
+					to   = to + _buffer[to].size();
+				}
+				*out++ = std::make_pair(range_t(from, to), transform::transpose(_buffer.substr(from, to)));
+			}
+			else if(range->columnar) // TODO from.line != to.line
+			{
+				std::vector<std::string> strings;
+				std::vector<range_t> ranges;
+
+				citerate(r, dissect_columnar(_buffer, *range))
+				{
+					strings.push_back(_buffer.substr(r->min().index, r->max().index));
+					ranges.push_back(*r);
+				}
+
+				for(size_t i = 0; i < ranges.size(); ++i)
+					*out++ = std::make_pair(ranges[i], strings[ranges.size()-1 - i]);
+			}
+			else
+			{
+				*out++ = std::make_pair(range_t(from, to), transform::transpose(_buffer.substr(from, to)));
+			}
+		}
+		return out;
+	}
+
 	// =============================
 	// = Preserve Selection Helper =
 	// =============================
@@ -83,14 +136,14 @@ namespace ng
 			{
 				if(range->empty())
 				{
-					_marks.push_back(mark_t(range->first, mark_t::kUnpairedMark));
-					_marks.push_back(mark_t(range->first, mark_t::kEndMark));
+					_marks.emplace_back(range->first, mark_t::kUnpairedMark);
+					_marks.emplace_back(range->first, mark_t::kEndMark);
 				}
 				else
 				{
 					size_t userInfo = (range->columnar ? kColumnar : 0) | (range->last < range->first ? kReversed : 0);
-					_marks.push_back(mark_t(range->min(), mark_t::kBeginMark, userInfo));
-					_marks.push_back(mark_t(range->max(), mark_t::kEndMark, userInfo));
+					_marks.emplace_back(range->min(), mark_t::kBeginMark, userInfo);
+					_marks.emplace_back(range->max(), mark_t::kEndMark, userInfo);
 				}
 			}
 
@@ -185,20 +238,17 @@ namespace ng
 		ssize_t adjustment = 0;
 		iterate(p1, replacements)
 		{
-			range_t orgRange   = p1->first.sorted();
-			std::string orgStr = p1->second;
-
-			if(orgRange.first.index == orgRange.last.index && orgStr.empty())
+			range_t orgRange = p1->first.sorted();
+			if(orgRange.first.index == orgRange.last.index && p1->second.empty())
 			{
 				res.push_back(orgRange + adjustment);
 				continue;
 			}
 
-			if(orgRange.freehanded && orgRange.first.carry)
-				orgStr = std::string(orgRange.first.carry, ' ') + orgStr;
+			std::string const pad = orgRange.freehanded && orgRange.first.carry ? std::string(orgRange.first.carry, ' ') : "";
 			orgRange.first.carry = orgRange.last.carry = 0;
 
-			std::vector< std::pair<range_t, std::string> > const& real = snippets.replace(orgRange.first.index, orgRange.last.index, orgStr);
+			std::vector< std::pair<range_t, std::string> > const& real = snippets.replace(orgRange.first.index, orgRange.last.index, pad + p1->second);
 			iterate(p2, real)
 			{
 				range_t const& range   = p2->first;
@@ -207,7 +257,7 @@ namespace ng
 				size_t from = range.first.index + adjustment, to = range.last.index + adjustment;
 				size_t caret = buffer.replace(from, to, str);
 				if(range == ng::range_t(orgRange.first.index, orgRange.last.index))
-					res.push_back(range_t(from, caret, false, orgRange.freehanded, true));
+					res.push_back(range_t(from + pad.size(), caret, false, orgRange.freehanded, true));
 				adjustment += str.size() - (to - from);
 			}
 		}
@@ -256,7 +306,7 @@ namespace ng
 		{
 			if(indent != NULL_STR) _options["indent"]    = indent;
 			if(complete)           _options["complete"]  = "1";
-			if(fragments > 1)      _options["fragments"] = text::format("%zu", fragments);
+			if(fragments > 1)      _options["fragments"] = std::to_string(fragments);
 			if(columnar)           _options["columnar"]  = "1";
 		}
 		std::map<std::string, std::string> const& options () const { return _options; }
@@ -318,7 +368,7 @@ namespace ng
 		return selectInsertions ? res : ng::move(_buffer, res, kSelectionMoveToEndOfSelection);
 	}
 
-	ranges_t editor_t::snippet (size_t from, size_t to, std::string const& str, std::map<std::string, std::string> const& variables)
+	ranges_t editor_t::snippet (size_t from, size_t to, std::string const& str, std::map<std::string, std::string> const& variables, bool disableIndent)
 	{
 		struct callback_t : snippet::run_command_callback_t
 		{
@@ -349,7 +399,7 @@ namespace ng
 
 		} callback;
 
-		std::string indent = _buffer.substr(_buffer.begin(_buffer.convert(from).line), from);
+		std::string indent = disableIndent ? "" : _buffer.substr(_buffer.begin(_buffer.convert(from).line), from);
 		size_t i = 0;
 		while(i < indent.size() && text::is_space(indent[i]))
 			++i;
@@ -361,6 +411,11 @@ namespace ng
 		map.insert(std::make_pair(range_t(from, to), snippet.text));
 		_snippets.push(snippet, this->replace(map, true).last());
 		return _snippets.current();
+	}
+
+	void editor_t::clear_snippets ()
+	{
+		_snippets.clear();
 	}
 
 	std::vector<std::string> const& editor_t::choices () const
@@ -440,7 +495,7 @@ namespace ng
 					{
 						// we special-case this to ensure we do not insert at last line with carry, as that will cause potential following insertions to have a lower index, since those will be at EOB w/o a carry
 						index_t pos = visual_advance(buffer, buffer.begin(n), col);
-						insertions.insert(std::make_pair(pos.index, std::string(pos.carry, ' ') + *line));
+						insertions.insert(std::make_pair(index_t(pos.index), std::string(pos.carry, ' ') + *line));
 					}
 					else
 					{
@@ -539,9 +594,9 @@ namespace ng
 
 	struct indent_helper_t : ng::callback_t
 	{
-		indent_helper_t (editor_t& editor, buffer_t& buffer) : _disabled(false), _editor(editor), _buffer(buffer)
+		indent_helper_t (editor_t& editor, buffer_t& buffer, bool indentCorrections) : _disabled(!indentCorrections), _editor(editor), _buffer(buffer)
 		{
-			_disabled = editor._selections.size() != 1 || editor._selections.last().columnar || plist::is_true(bundles::value_for_setting("disableIndentCorrections", editor.scope()));
+			_disabled = _disabled || editor._selections.size() != 1 || editor._selections.last().columnar;
 			if(_disabled)
 				return;
 
@@ -627,7 +682,7 @@ namespace ng
 		return NULL_STR;
 	}
 
-	void editor_t::insert_with_pairing (std::string const& str)
+	void editor_t::insert_with_pairing (std::string const& str, bool indentCorrections, std::string const& scopeAttributes)
 	{
 		if(!has_selection())
 		{
@@ -640,8 +695,8 @@ namespace ng
 			}
 		}
 
-		indent_helper_t indent_helper(*this, _buffer);
-		std::string const autoInsert = find_paired(str, scope());
+		indent_helper_t indent_helper(*this, _buffer, indentCorrections);
+		std::string const autoInsert = find_paired(str, scope(scopeAttributes));
 		if(autoInsert != NULL_STR && has_selection())
 		{
 			_selections = replace_helper(_buffer, _snippets, map(_buffer, _selections, transform::surround(str, autoInsert)));
@@ -654,9 +709,9 @@ namespace ng
 		{
 			if(str == autoInsert && str.size() == 1)
 			{
-				size_t const caret = _selections.last().last.index;
-				std::string leftOfCaret = _buffer.substr(_buffer.begin(_buffer.convert(caret).line), caret);
-				if(std::count(leftOfCaret.begin(), leftOfCaret.end(), str[0]) % 2 == 1)
+				size_t const lineNo = _buffer.convert(_selections.last().last.index).line;
+				std::string line = _buffer.substr(_buffer.begin(lineNo), _buffer.eol(lineNo));
+				if(std::count(line.begin(), line.end(), str[0]) % 2 == 1)
 					return insert(str);
 			}
 
@@ -686,14 +741,14 @@ namespace ng
 		_selections = tmp.empty() ? tmp : sel;
 	}
 
-	void editor_t::snippet (std::string const& str, std::map<std::string, std::string> const& variables)
+	void editor_t::snippet (std::string const& str, std::map<std::string, std::string> const& variables, bool disableIndent)
 	{
 		size_t from = _selections.last().min().index;
 		size_t to   = _selections.last().max().index;
-		_selections = this->snippet(from, to, str, variables);
+		_selections = this->snippet(from, to, str, variables, disableIndent);
 	}
 
-	void editor_t::perform (action_t action, layout_t const* layout)
+	void editor_t::perform (action_t action, layout_t const* layout, bool indentCorrections, std::string const& scopeAttributes)
 	{
 		static std::string const kSingleMarkType = "•";
 		preserve_selection_helper_t selectionHelper(_buffer, _selections);
@@ -731,6 +786,8 @@ namespace ng
 			case kDeleteSubWordRight:                           _selections = ng::extend_if_empty(_buffer, _selections, kSelectionExtendToEndOfSubWord,     layout); break;
 			case kDeleteWordBackward:                           _selections = ng::extend_if_empty(_buffer, _selections, kSelectionExtendToBeginOfWord,      layout); break;
 			case kDeleteWordForward:                            _selections = ng::extend_if_empty(_buffer, _selections, kSelectionExtendToEndOfWord,        layout); break;
+			case kDeleteToBeginningOfIndentedLine:              _selections = ng::extend_if_empty(_buffer, _selections, kSelectionExtendToBeginOfIndentedLine, layout); break;
+			case kDeleteToEndOfIndentedLine:                    _selections = ng::extend_if_empty(_buffer, _selections, kSelectionExtendToEndOfIndentedLine, layout); break;
 			case kDeleteToBeginningOfLine:                      _selections = ng::extend_if_empty(_buffer, _selections, kSelectionExtendToBeginOfSoftLine,  layout); break;
 			case kDeleteToEndOfLine:                            _selections = ng::extend_if_empty(_buffer, _selections, kSelectionExtendToEndOfSoftLine,    layout); break;
 			case kDeleteToBeginningOfParagraph:                 _selections = ng::extend_if_empty(_buffer, _selections, kSelectionExtendToBeginOfParagraph, layout); break;
@@ -750,14 +807,14 @@ namespace ng
 			case kShiftRight:                                   _selections = ng::extend(_buffer, _selections, kSelectionExtendToLineExclLF,                layout); break;
 		}
 
-		static action_t const deleteActions[]      = { kDeleteBackward, kDeleteForward };
-		static action_t const yankAppendActions[]  = { kDeleteSubWordRight, kDeleteWordForward,  kDeleteToEndOfLine,       kDeleteToEndOfParagraph       };
-		static action_t const yankPrependActions[] = { kDeleteSubWordLeft,  kDeleteWordBackward, kDeleteToBeginningOfLine, kDeleteToBeginningOfParagraph };
-		if(oak::contains(beginof(deleteActions), endof(deleteActions), action))
+		static std::set<action_t> const deleteActions      = { kDeleteBackward, kDeleteForward };
+		static std::set<action_t> const yankAppendActions  = { kDeleteSubWordRight, kDeleteWordForward,  kDeleteToEndOfIndentedLine,       kDeleteToEndOfLine,       kDeleteToEndOfParagraph };
+		static std::set<action_t> const yankPrependActions = { kDeleteSubWordLeft,  kDeleteWordBackward, kDeleteToBeginningOfIndentedLine, kDeleteToBeginningOfLine, kDeleteToBeginningOfParagraph };
+		if(deleteActions.find(action) != deleteActions.end())
 			action = kDeleteSelection;
-		else if(oak::contains(beginof(yankAppendActions), endof(yankAppendActions), action))
+		else if(yankAppendActions.find(action) != yankAppendActions.end())
 			action = _extend_yank_clipboard ? kAppendSelectionToYankPboard : kCopySelectionToYankPboard;
-		else if(oak::contains(beginof(yankPrependActions), endof(yankPrependActions), action))
+		else if(yankPrependActions.find(action) != yankPrependActions.end())
 			action = _extend_yank_clipboard ? kPrependSelectionToYankPboard : kCopySelectionToYankPboard;
 		_extend_yank_clipboard = false;
 
@@ -771,6 +828,8 @@ namespace ng
 			case kMoveSubWordRight:                             _selections = ng::move(_buffer, _selections, kSelectionMoveToEndOfSubWord,    layout); break;
 			case kMoveWordBackward:                             _selections = ng::move(_buffer, _selections, kSelectionMoveToBeginOfWord,     layout); break;
 			case kMoveWordForward:                              _selections = ng::move(_buffer, _selections, kSelectionMoveToEndOfWord,       layout); break;
+			case kMoveToBeginningOfIndentedLine:                _selections = ng::move(_buffer, _selections, kSelectionMoveToBeginOfIndentedLine, layout); break;
+			case kMoveToEndOfIndentedLine:                      _selections = ng::move(_buffer, _selections, kSelectionMoveToEndOfIndentedLine, layout); break;
 			case kMoveToBeginningOfLine:                        _selections = ng::move(_buffer, _selections, kSelectionMoveToBeginOfSoftLine, layout); break;
 			case kMoveToEndOfLine:                              _selections = ng::move(_buffer, _selections, kSelectionMoveToEndOfSoftLine,   layout); break;
 			case kMoveToBeginningOfParagraph:                   _selections = ng::move(_buffer, _selections, kSelectionMoveToBeginOfLine,     layout); break;
@@ -792,6 +851,8 @@ namespace ng
 			case kMoveSubWordRightAndModifySelection:           _selections = ng::extend(_buffer, _selections, kSelectionExtendToEndOfSubWord,     layout); break;
 			case kMoveWordBackwardAndModifySelection:           _selections = ng::extend(_buffer, _selections, kSelectionExtendToBeginOfWord,      layout); break;
 			case kMoveWordForwardAndModifySelection:            _selections = ng::extend(_buffer, _selections, kSelectionExtendToEndOfWord,        layout); break;
+			case kMoveToBeginningOfIndentedLineAndModifySelection: _selections = ng::extend(_buffer, _selections, kSelectionExtendToBeginOfIndentedLine, layout); break;
+			case kMoveToEndOfIndentedLineAndModifySelection:    _selections = ng::extend(_buffer, _selections, kSelectionExtendToEndOfIndentedLine, layout); break;
 			case kMoveToBeginningOfLineAndModifySelection:      _selections = ng::extend(_buffer, _selections, kSelectionExtendToBeginOfSoftLine,  layout); break;
 			case kMoveToEndOfLineAndModifySelection:            _selections = ng::extend(_buffer, _selections, kSelectionExtendToEndOfSoftLine,    layout); break;
 			case kMoveToBeginningOfParagraphAndModifySelection: _selections = ng::extend(_buffer, _selections, kSelectionExtendToBeginOfParagraph, layout); break;
@@ -818,13 +879,17 @@ namespace ng
 
 			case kFindNext:
 			case kFindPrevious:
+			case kFindNextAndModifySelection:
+			case kFindPreviousAndModifySelection:
 			case kFindAll:
 			case kFindAllInSelection:
 			{
 				if(clipboard_t::entry_ptr findEntry = find_clipboard()->current())
 				{
 					find::options_t options = convert(findEntry->options());
-					if(action == kFindPrevious)
+					if(action == kFindNextAndModifySelection || action == kFindPreviousAndModifySelection)
+						options = options | find::extend_selection;
+					if(action == kFindPrevious || action == kFindPreviousAndModifySelection)
 						options = options | find::backwards;
 					else if(action == kFindAll || action == kFindAllInSelection)
 						options = options | find::all_matches;
@@ -834,7 +899,6 @@ namespace ng
 			}
 			break;
 
-			case kReplace:
 			case kReplaceAll:
 			case kReplaceAllInSelection:
 			{
@@ -846,15 +910,19 @@ namespace ng
 					if(action == kReplaceAll || action == kReplaceAllInSelection)
 						options = options | find::all_matches;
 
-					replace(findEntry->content(), replaceEntry->content(), options, action == kReplaceAllInSelection);
+					replace_all(findEntry->content(), replaceEntry->content(), options, action == kReplaceAllInSelection);
 				}
 			}
 			break;
 
+			case kReplace:
 			case kReplaceAndFind:
 			{
-				perform(kReplace);
-				perform(kFindNext);
+				if(action == kReplace)
+				{
+					/* TODO Implement ‘Replace’ (after find) action */
+				}
+				perform(kFindNext, layout, indentCorrections, scopeAttributes);
 			}
 			break;
 
@@ -880,7 +948,7 @@ namespace ng
          
 			case kDeleteSelection:
 			{
-				indent_helper_t indent_helper(*this, _buffer);
+				indent_helper_t indent_helper(*this, _buffer, indentCorrections);
 				_selections = apply(_buffer, _selections, _snippets, &transform::null);
 			}
 			break;
@@ -966,56 +1034,20 @@ namespace ng
 			case kTranspose:
 			{
 				std::multimap<range_t, std::string> replacements;
-
-				ranges_t sel;
-				iterate(range, _selections)
+				auto inserter = std::inserter(replacements, replacements.end());
+				if(_selections.size() > 1 && not_empty(_buffer, _selections))
 				{
-					size_t from = range->min().index, to = range->max().index;
-					if(from == to)
-					{
-						text::pos_t const& pos = _buffer.convert(from);
-
-						if(from == 0 || from == _buffer.size())
-						{
-						}
-						else if(pos.column == 0)
-						{
-							from = _buffer.begin(pos.line - 1);
-							to = pos.line+1 == _buffer.lines() ? _buffer.size() : _buffer.begin(pos.line + 1);
-						}
-						else if(from == _buffer.eol(pos.line))
-						{
-							from = _buffer.begin(pos.line);
-							to = pos.line+2 == _buffer.lines() ? _buffer.size() : _buffer.begin(pos.line + 2);
-						}
-						else
-						{
-							from = from - _buffer[from-1].size();
-							to   = to + _buffer[to].size();
-						}
-						replacements.insert(std::make_pair(range_t(from, to), transform::transpose(_buffer.substr(from, to))));
-					}
-					else if(range->columnar) // TODO from.line != to.line
-					{
-						std::vector<std::string> strings;
-						std::vector<range_t> ranges;
-
-						citerate(r, dissect_columnar(_buffer, *range))
-						{
-							strings.push_back(_buffer.substr(r->min().index, r->max().index));
-							ranges.push_back(*r);
-						}
-
-						for(size_t i = 0; i < ranges.size(); ++i)
-							replacements.insert(std::make_pair(ranges[i], strings[ranges.size()-1 - i]));
-					}
-					else
-					{
-						replacements.insert(std::make_pair(range_t(from, to), transform::transpose(_buffer.substr(from, to))));
-					}
+					std::multiset<range_t> ranges(_selections.begin(), _selections.end());
+					std::vector<std::string> strings;
+					std::transform(ranges.begin(), ranges.end(), back_inserter(strings), [this](range_t const& r){ return _buffer.substr(r.min().index, r.max().index); });
+					std::next_permutation(strings.begin(), strings.end());
+					std::transform(ranges.begin(), ranges.end(), strings.begin(), inserter, [](range_t const& r, std::string const& str){ return std::make_pair(r, str); });
 				}
-
-				_selections = this->replace(replacements);
+				else
+				{
+					transpose_selections(_buffer, _selections, inserter);
+				}
+				_selections = this->replace(replacements, not_empty(_buffer, _selections));
 			}
 			break;
 
@@ -1039,13 +1071,15 @@ namespace ng
 				{
 					size_t bol = _buffer.begin(n);
 					size_t eos = bol;
-					if(fsm.is_ignored(_buffer.substr(bol, _buffer.eol(n))))
+
+					std::string const line = _buffer.substr(bol, _buffer.eol(n));
+					if(text::is_blank(line.data(), line.data() + line.size()))
 						continue;
 
 					while(eos != _buffer.size() && text::is_whitespace(_buffer[eos]))
 						eos += _buffer[eos].size();
 
-					replacements.insert(std::make_pair(range_t(bol, eos), indent::create(fsm.scan_line(_buffer.substr(bol, _buffer.eol(n))), _buffer.indent().tab_size(), _buffer.indent().soft_tabs())));
+					replacements.insert(std::make_pair(range_t(bol, eos), indent::create(fsm.scan_line(line), _buffer.indent().tab_size(), _buffer.indent().soft_tabs())));
 				}
 
 				if(!replacements.empty())
@@ -1112,8 +1146,8 @@ namespace ng
 			case kUnwrapText:              _selections = apply(_buffer, _selections, _snippets, &transform::unwrap); break;
 
 			case kComplete:
-			case kNextCompletion:          next_completion();      break;
-			case kPreviousCompletion:      previous_completion();  break;
+			case kNextCompletion:          next_completion(scopeAttributes);      break;
+			case kPreviousCompletion:      previous_completion(scopeAttributes);  break;
 
 			case kMoveSelectionUp:         move_selection( 0, -1); break;
 			case kMoveSelectionDown:       move_selection( 0, +1); break;
@@ -1121,8 +1155,8 @@ namespace ng
 			case kMoveSelectionRight:      move_selection(+1,  0); break;
 		}
 
-		static action_t const preserveSelectionActions[] = { kCapitalizeWord, kUppercaseWord, kLowercaseWord, kChangeCaseOfLetter, kIndent, kShiftLeft, kShiftRight, kReformatText, kReformatTextAndJustify, kUnwrapText };
-		if(oak::contains(beginof(preserveSelectionActions), endof(preserveSelectionActions), action))
+		static std::set<action_t> const preserveSelectionActions = { kCapitalizeWord, kUppercaseWord, kLowercaseWord, kChangeCaseOfLetter, kIndent, kShiftLeft, kShiftRight, kReformatText, kReformatTextAndJustify, kUnwrapText };
+		if(preserveSelectionActions.find(action) != preserveSelectionActions.end())
 			_selections = selectionHelper.get(action == kChangeCaseOfLetter || action == kChangeCaseOfWord);
 	}
 
@@ -1233,11 +1267,11 @@ namespace ng
 		{
 			text::pos_t pos = _buffer.convert(pair->first);
 			int line        = pos.line;
-			int col         = visual_distance(_buffer, _buffer.begin(line), pair->first);
+			int col         = visual_distance(_buffer, _buffer.begin(line), pair->first, false);
 
 			line = oak::cap(0, line + deltaY, int(_buffer.lines()-1));
 			col  = std::max(col + deltaX, 0);
-			replacements.insert(std::make_pair(visual_advance(_buffer, _buffer.begin(line), col), pair->second));
+			replacements.insert(std::make_pair(visual_advance(_buffer, _buffer.begin(line), col, false), pair->second));
 		}
 		_selections = this->replace(replacements, true);
 	}
@@ -1270,10 +1304,11 @@ namespace ng
 		switch(format)
 		{
 			case output_format::snippet:
+			case output_format::snippet_no_auto_indent:
 			{
 				if(range)
 					_selections = range;
-				snippet(out, environment);
+				snippet(out, environment, format == output_format::snippet_no_auto_indent);
 			}
 			break;
 
@@ -1281,7 +1316,7 @@ namespace ng
 			{
 				if(range)
 					_selections = range;
-				insert(out);
+				insert(out, outputCaret == output_caret::select_output);
 				if(range && outputCaret == output_caret::interpolate_by_char)
 				{
 					offset = utf8::find_safe_end(out.begin(), out.begin() + std::min(offset, out.size())) - out.begin();
@@ -1320,20 +1355,19 @@ namespace ng
 		_selections = apply(_buffer, ranges, _snippets, &transform::null);
 	}
 
-	scope::context_t editor_t::scope () const
+	scope::context_t editor_t::scope (std::string const& scopeAttributes) const
 	{
-		return ng::scope(_buffer, _selections, _document->path_attributes());
+		return ng::scope(_buffer, _selections, scopeAttributes);
 	}
 
-	std::map<std::string, std::string> editor_t::variables (std::map<std::string, std::string> map) const
+	std::map<std::string, std::string> editor_t::variables (std::map<std::string, std::string> map, std::string const& scopeAttributes) const
 	{
 		if(_document)
 				map = _document->variables(map);
 		else	map = variables_for_path(NULL_STR, "", map);
 
-		map.insert(std::make_pair("TM_TAB_SIZE", text::format("%zu", _buffer.indent().tab_size())));
-		if(_buffer.indent().soft_tabs())
-			map.insert(std::make_pair("TM_SOFT_TABS", "YES"));
+		map.insert(std::make_pair("TM_TAB_SIZE", std::to_string(_buffer.indent().tab_size())));
+		map.insert(std::make_pair("TM_SOFT_TABS", _buffer.indent().soft_tabs() ? "YES" : "NO"));
 		map.insert(std::make_pair("TM_SELECTION", to_s(_buffer, _selections)));
 
 		if(_selections.size() == 1)
@@ -1344,9 +1378,9 @@ namespace ng
 				size_t const caret = range.last.index;
 				text::pos_t const& pos = _buffer.convert(caret);
 
-				map.insert(std::make_pair("TM_LINE_INDEX",    text::format("%zu", pos.column)));
-				map.insert(std::make_pair("TM_LINE_NUMBER",   text::format("%zu", pos.line+1)));
-				map.insert(std::make_pair("TM_COLUMN_NUMBER", text::format("%zu", visual_distance(_buffer, _buffer.begin(pos.line), caret)+1)));
+				map.insert(std::make_pair("TM_LINE_INDEX",    std::to_string(pos.column)));
+				map.insert(std::make_pair("TM_LINE_NUMBER",   std::to_string(pos.line+1)));
+				map.insert(std::make_pair("TM_COLUMN_NUMBER", std::to_string(visual_distance(_buffer, _buffer.begin(pos.line), caret)+1)));
 
 				range_t wordRange = ng::extend(_buffer, _selections, kSelectionExtendToWord).last();
 				map.insert(std::make_pair("TM_CURRENT_WORD",  _buffer.substr(wordRange.min().index, wordRange.max().index)));
@@ -1356,11 +1390,26 @@ namespace ng
 			}
 			else
 			{
-				map.insert(std::make_pair("TM_SELECTED_TEXT", _buffer.substr(range.min().index, range.max().index)));
+				if(32 + range.max().index - range.min().index < ARG_MAX)
+				{
+					bool first = true;
+					citerate(r, dissect_columnar(_buffer, range))
+					{
+						if(first)
+								map["TM_SELECTED_TEXT"] = "";
+						else	map["TM_SELECTED_TEXT"] += "\n";
+						map["TM_SELECTED_TEXT"] += _buffer.substr(r->min().index, r->max().index);
+						first = false;
+					}
+				}
+				else
+				{
+					map.insert(std::make_pair("TM_SELECTED_TEXT", text::format("Error: Selection exceeds %s. Command should read selection from stdin.", text::format_size(ARG_MAX-32).c_str())));
+				}
 			}
 		}
 
-		scope::context_t const& s = scope();
+		scope::context_t const& s = scope(scopeAttributes);
 		map.insert(std::make_pair("TM_SCOPE", to_s(s.right)));
 		return bundles::environment(s, map);
 	}
@@ -1394,7 +1443,7 @@ namespace ng
 			_selections = res;
 	}
 
-	ranges_t editor_t::replace (std::string const& searchFor, std::string const& replaceWith, find::options_t options, bool searchOnlySelection)
+	ranges_t editor_t::replace_all (std::string const& searchFor, std::string const& replaceWith, find::options_t options, bool searchOnlySelection)
 	{
 		ranges_t res;
 		if(options & find::all_matches)
@@ -1405,9 +1454,6 @@ namespace ng
 				replacements.insert(std::make_pair(pair->first, options & find::regular_expression ? format_string::expand(replaceWith, pair->second) : replaceWith));
 			res = this->replace(replacements, true);
 			_selections = helper.get(false);
-		}
-		else
-		{
 		}
 		return res;
 	}

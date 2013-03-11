@@ -8,7 +8,7 @@
 
 namespace oak
 {
-	template <typename T, typename ARG = typename T::request_t, typename RESULT = typeof(T::handle_request(ARG()))>
+	template <typename T, typename ARG = typename T::request_t, typename RESULT = decltype(T::handle_request(ARG()))>
 	struct server_t
 	{
 		server_t (size_t threadStackSize = 0);
@@ -56,7 +56,7 @@ namespace oak
 		};
 
 		should_terminate = false;
-		run_loop_source = cf::create_callback(&server_t::master_run, this);
+		run_loop_source = cf::create_callback(std::bind(&server_t::master_run, this));
 
 		pthread_mutex_init(&requests_mutex, NULL);
 		pthread_mutex_init(&results_mutex, NULL);

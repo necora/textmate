@@ -60,7 +60,7 @@ namespace ng
 	struct marks_t;
 	struct lines_t;
 	struct buffer_parser_t;
-	typedef std::tr1::shared_ptr<buffer_parser_t> buffer_parser_ptr;
+	typedef std::shared_ptr<buffer_parser_t> buffer_parser_ptr;
 
 	struct PUBLIC buffer_t
 	{
@@ -75,7 +75,7 @@ namespace ng
 		size_t revision () const               { return _revision; }
 		size_t next_revision () const          { return _next_revision; }
 		size_t bump_revision ()                { set_revision(_next_revision++); return _revision; }
-		void set_revision (size_t newRevision) { ASSERT_LT(newRevision, _next_revision); _revision = newRevision; initiate_repair(); }
+		void set_revision (size_t newRevision) { ASSERT_LT(newRevision, _next_revision); _revision = newRevision; initiate_repair(20); }
 
 		char at (size_t i) const;
 		std::string operator[] (size_t i) const;
@@ -166,8 +166,8 @@ namespace ng
 		friend struct buffer_parser_t;
 		buffer_parser_ptr parser;
 		text::indent_t _indent;
-		void initiate_repair ();
-		void update_scopes (std::pair<size_t, size_t> const& range, std::map<size_t, scope::scope_t> const& newScopes, parse::stack_ptr parserState);
+		void initiate_repair (size_t limit_redraw = 0, size_t super_from = -1);
+		void update_scopes (size_t limit_redraw, size_t const& super_range,std::pair<size_t, size_t> const& range, std::map<size_t, scope::scope_t> const& newScopes, parse::stack_ptr parserState);
 
 		size_t _revision, _next_revision;
 		std::string _spelling_language;
@@ -179,10 +179,10 @@ namespace ng
 		indexed_map_t<scope::scope_t>    _scopes;
 		indexed_map_t<parse::stack_ptr>  _parser_states;
 
-		std::tr1::shared_ptr<spelling_t> _spelling;
-		std::tr1::shared_ptr<symbols_t>  _symbols;
-		std::tr1::shared_ptr<marks_t>    _marks;
-		std::tr1::shared_ptr<pairs_t>    _pairs;
+		std::shared_ptr<spelling_t> _spelling;
+		std::shared_ptr<symbols_t>  _symbols;
+		std::shared_ptr<marks_t>    _marks;
+		std::shared_ptr<pairs_t>    _pairs;
 
 		friend struct spelling_t; // _scopes
 		friend struct symbols_t;  // _scopes

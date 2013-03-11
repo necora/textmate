@@ -5,10 +5,11 @@
 */
 
 #import "OakPasteboardSelector.h"
+#import <ns/ns.h>
 #import <oak/oak.h>
 #import <oak/debug.h>
 
-static size_t line_count (std::string text)
+static size_t line_count (std::string const& text)
 {
 	size_t line_count = std::count(text.begin(), text.end(), '\n') + 1;
 	if(text.size() > 0 && text[text.size() - 1] == '\n')
@@ -54,9 +55,36 @@ static size_t line_count (std::string text)
 	}
 }
 
+- (NSArray*)accessibilityAttributeNames
+{
+	static NSArray* attributes = nil;
+	if(!attributes)
+	{
+		NSSet* set = [NSSet setWithArray:[super accessibilityAttributeNames]];
+		set = [set setByAddingObjectsFromArray:@[
+			NSAccessibilityRoleAttribute,
+			NSAccessibilityValueAttribute,
+		]];
+		attributes = [[set allObjects] retain];
+	}
+	return attributes;
+}
+
+- (id)accessibilityAttributeValue:(NSString*)attribute
+{
+	id value = nil;
+	if([attribute isEqualToString:NSAccessibilityRoleAttribute])
+		value = NSAccessibilityStaticTextRole;
+	else if([attribute isEqualToString:NSAccessibilityValueAttribute])
+		value = [self objectValue];
+	else
+		value = [super accessibilityAttributeValue:attribute];
+	return value;
+}
+
 - (size_t)lineCountForText:(NSString*)text
 {
-	return oak::cap((size_t)1, line_count([text UTF8String]), maxLines);
+	return oak::cap<size_t>(1, line_count(to_s(text)), maxLines);
 }
 
 - (void)drawWithFrame:(NSRect)frame inView:(NSView*)controlView
@@ -317,11 +345,11 @@ static OakPasteboardSelector* SharedInstance;
 
 	while(NSEvent* event = [NSApp nextEventMatchingMask:NSAnyEventMask untilDate:[NSDate distantFuture] inMode:NSDefaultRunLoopMode dequeue:YES])
 	{
-		static NSEventType const keyEvent[]   = { NSKeyDown, NSKeyUp };
-		static NSEventType const mouseEvent[] = { NSLeftMouseDown, NSLeftMouseUp, NSRightMouseDown, NSRightMouseUp, NSOtherMouseDown, NSOtherMouseUp };
+		static std::set<NSEventType> const keyEvent   = { NSKeyDown, NSKeyUp };
+		static std::set<NSEventType> const mouseEvent = { NSLeftMouseDown, NSLeftMouseUp, NSRightMouseDown, NSRightMouseUp, NSOtherMouseDown, NSOtherMouseUp };
 
-		bool orderOutEvent = (oak::contains(beginof(keyEvent), endof(keyEvent), [event type]) && [event window] != parentWindow) || (oak::contains(beginof(mouseEvent), endof(mouseEvent), [event type]) && [event window] != window);
-		if(!orderOutEvent && oak::contains(beginof(keyEvent), endof(keyEvent), [event type]) && !([event modifierFlags] & NSCommandKeyMask))
+		bool orderOutEvent = (keyEvent.find([event type]) != keyEvent.end() && [event window] != parentWindow) || (mouseEvent.find([event type]) != mouseEvent.end() && [event window] != window);
+		if(!orderOutEvent && keyEvent.find([event type]) != keyEvent.end() && !([event modifierFlags] & NSCommandKeyMask))
 				[window sendEvent:event];
 		else	[NSApp sendEvent:event];
 

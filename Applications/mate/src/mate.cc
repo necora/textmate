@@ -5,12 +5,16 @@
 #include <cf/cf.h>
 #include <io/path.h>
 
-static double const AppVersion  = 2.2;
+static double const AppVersion  = 2.4;
 static size_t const AppRevision = APP_REVISION;
 
 static char const* socket_path ()
 {
-	static std::string const str = text::format("/tmp/textmate-%d.sock", getuid());
+	int uid = getuid();
+	if(getenv("SUDO_UID"))
+		uid = atoi(getenv("SUDO_UID"));
+
+	static std::string const str = text::format("/tmp/textmate-%d.sock", uid);
 	return str.c_str();
 }
 
@@ -70,7 +74,7 @@ static bool find_app (FSRef* outAppRef, std::string* outAppStr)
 	return err == noErr;
 }
 
-static void launch_app ()
+static void launch_app (bool disableUntitled)
 {
 	disable_sudo_helper_t helper;
 
@@ -78,11 +82,9 @@ static void launch_app ()
 	if(!find_app(&appFSRef, NULL))
 		abort();
 
-	std::map<std::string, std::string> tmp;
-	tmp["OAK_DISABLE_UNTITLED_FILE"] = "YES";
-	cf::dictionary_t environment(tmp);
+	cf::array_t args(disableUntitled ? std::vector<std::string>{ "-disableNewDocumentAtStartup", "1" } : std::vector<std::string>{ });
 
-	struct LSApplicationParameters const appParams = { 0, kLSLaunchDontAddToRecents|kLSLaunchDontSwitch|kLSLaunchAndDisplayErrors, &appFSRef, NULL, environment, NULL, NULL };
+	struct LSApplicationParameters const appParams = { 0, kLSLaunchDontAddToRecents|kLSLaunchDontSwitch|kLSLaunchAndDisplayErrors, &appFSRef, NULL, NULL, args, NULL };
 	OSStatus err = LSOpenApplication(&appParams, NULL);
 	if(err != noErr)
 	{
@@ -273,7 +275,7 @@ int main (int argc, char* argv[])
 	while(-1 == connect(fd, (sockaddr*)&addr, sizeof(addr)))
 	{
 		if(!didLaunch)
-			launch_app();
+			launch_app(!files.empty());
 		didLaunch = true;
 		usleep(500000);
 	}
@@ -297,7 +299,7 @@ int main (int argc, char* argv[])
 			{
 				if(len == -1)
 					break;
-				write_key_pair(fd, "data", text::format("%zu", len));
+				write_key_pair(fd, "data", std::to_string(len));
 				write(fd, buf, len);
 			}
 

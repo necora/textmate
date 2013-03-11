@@ -1,14 +1,33 @@
 #!/usr/bin/env ruby -wKU
 #
 # http://developer.apple.com/library/mac/#technotes/tn2004/tn2123.html
+require "fileutils"
+require "shellwords"
+
+DSYM_ARCHIVE_DIR = "#{ENV['HOME']}/build/TextMate/Applications/TextMate"
+DSYM_CACHE_DIR   = "#{ENV['HOME']}/Library/Caches/com.macromates.TextMate-dsym"
 
 BinaryImage = Struct.new(:first, :last, :name, :file)
+
+def find_dsym(process, version)
+  path = File.expand_path("#{process}_r#{version}", DSYM_CACHE_DIR)
+  return path if File.directory?(path)
+
+  archive = File.expand_path("#{process}_r#{version}-dSYM.tbz", DSYM_ARCHIVE_DIR)
+  return nil unless File.file?(archive)
+
+  FileUtils.mkdir_p(path)
+  STDERR << "Extracting dsym to ‘#{path}’…\n"
+  %x{ tar -jxf #{Shellwords.shellescape archive} -C #{Shellwords.shellescape path} }
+
+  path
+end
 
 class BinaryImages
   def initialize(files, report)
     uuid_to_file = { }
     files.each do |file|
-      res = %x{dwarfdump -u "#{file}"} # UUID: A6E43B7B-91A1-B04D-F3D5-BF10D5220B77 (i386) /tmp/Avian_r7963_dSYM/Avian.app.dSYM/Contents/Resources/DWARF/Avian
+      res = %x{dwarfdump -u "#{file}"}
       file = file.sub(%r{([^/]+?)(\.(app|framework))?\.dSYM$}, "\\0/Contents/Resources/DWARF/\\1") if File.directory? file
       uuid_to_file[$1.gsub(/-/, '')] = file if res =~ /UUID: ([0-9A-F\-]*)/
     end
@@ -27,7 +46,7 @@ class BinaryImages
   def lookup(addr)
     @images.each do |image|
       next unless image.first <= addr && addr < image.last
-      res = %x{atos -o #{image.file} -l 0x#{image.first.to_s(16)} 0x#{addr.to_s(16)}}.chomp
+      res = %x{atos 2>/dev/null -o #{image.file} -l 0x#{image.first.to_s(16)} 0x#{addr.to_s(16)}}.chomp
       res.gsub!(/ \(in #{File.basename image.file}\)/, '')
       return res
     end
@@ -39,8 +58,8 @@ report = STDIN.read
 
 process = $1 if report =~ /^Process:\s+(\w+)\s+\[\d+\]$/
 version = $1 if report =~ /^Version:.*\((.*?)\)$/
-dsym_dir = "#{ENV['HOME']}/Oak/Archives/dSYM/#{process}_r#{version}"
-abort "Directory does not exist: ‘#{dsym_dir}’." unless File.exists? dsym_dir
+dsym_dir = find_dsym(process, version)
+abort "No dsym information for version #{version} of #{process}." if dsym_dir.nil?
 
 images = BinaryImages.new(Dir["#{dsym_dir}/*"], report)
 
@@ -144,8 +163,8 @@ Thread 4:  server (N2ng15buffer_parser_tE)
 0   libSystem.B.dylib             	0x90073aa2 __semwait_signal + 10
 1   libSystem.B.dylib             	0x9007375e _pthread_cond_wait + 1191
 2   libSystem.B.dylib             	0x900753f8 pthread_cond_wait$UNIX2003 + 73
-3   libbuffer.dylib               	0x006416df oak::server_t<ng::buffer_parser_t, std::tr1::shared_ptr<ng::buffer_t>, ng::buffer_parser_t::result_t>::server_run() + 203 (stl_vector.h:343)
-4   libbuffer.dylib               	0x0063f7ed oak::server_t<ng::buffer_parser_t, std::tr1::shared_ptr<ng::buffer_t>, ng::buffer_parser_t::result_t>::server_t(unsigned long)::runner_t::server(void*) + 17 (server.h:55)
+3   libbuffer.dylib               	0x006416df oak::server_t<ng::buffer_parser_t, std::shared_ptr<ng::buffer_t>, ng::buffer_parser_t::result_t>::server_run() + 203 (stl_vector.h:343)
+4   libbuffer.dylib               	0x0063f7ed oak::server_t<ng::buffer_parser_t, std::shared_ptr<ng::buffer_t>, ng::buffer_parser_t::result_t>::server_t(unsigned long)::runner_t::server(void*) + 17 (server.h:55)
 5   libSystem.B.dylib             	0x90073259 _pthread_start + 345
 6   libSystem.B.dylib             	0x900730de thread_start + 34
 

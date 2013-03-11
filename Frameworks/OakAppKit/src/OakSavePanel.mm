@@ -62,43 +62,32 @@
 @end
 
 @implementation OakSavePanel
-- (id)initWithPath:(NSString*)aPathSuggestion directory:(NSString*)aDirectorySuggestion fowWindow:(NSWindow*)aWindow delegate:(id)aDelegate encoding:(encoding::type const&)encoding
++ (void)showWithPath:(NSString*)aPathSuggestion directory:(NSString*)aDirectorySuggestion fowWindow:(NSWindow*)aWindow encoding:(encoding::type const&)encoding completionHandler:(void(^)(NSString* path, encoding::type const& encoding))aCompletionHandler
 {
-	if((self = [super init]))
+	OakEncodingSaveOptionsViewController* optionsViewController = [[[OakEncodingSaveOptionsViewController alloc] initWithEncodingOptions:encoding] autorelease];
+	if(!optionsViewController)
+		return;
+
+	[[aWindow attachedSheet] orderOut:self]; // incase there already is a sheet showing (like “Do you want to save?”)
+
+	NSSavePanel* savePanel = [NSSavePanel savePanel];
+	[savePanel setTreatsFilePackagesAsDirectories:YES];
+	if(aDirectorySuggestion)
+		[savePanel setDirectoryURL:[NSURL fileURLWithPath:aDirectorySuggestion]];
+	[savePanel setNameFieldStringValue:[aPathSuggestion lastPathComponent]];
+	[savePanel setAccessoryView:optionsViewController.view];
+	[savePanel beginSheetModalForWindow:aWindow completionHandler:^(NSInteger result) {
+		NSString* path = result == NSOKButton ? [[savePanel.URL filePathURL] path] : nil;
+		aCompletionHandler(path, optionsViewController.encodingOptions);
+	}];
+
+	// Deselect Extension
+	if([savePanel.firstResponder isKindOfClass:[NSTextView class]])
 	{
-		optionsViewController = [[OakEncodingSaveOptionsViewController alloc] initWithEncodingOptions:encoding];
-		if(!optionsViewController)
-		{
-			[self release];
-			return nil;
-		}
-
-		[[aWindow attachedSheet] orderOut:self]; // incase there already is a sheet showing (like “Do you want to save?”)
-
-		NSSavePanel* savePanel = [NSSavePanel savePanel];
-		[savePanel setTreatsFilePackagesAsDirectories:YES];
-		if(aDirectorySuggestion)
-			[savePanel setDirectoryURL:[NSURL fileURLWithPath:aDirectorySuggestion]];
-		[savePanel setNameFieldStringValue:[aPathSuggestion lastPathComponent]];
-		[savePanel setAccessoryView:optionsViewController.view];
-		[savePanel beginSheetModalForWindow:aWindow completionHandler:^(NSInteger result) {
-			NSString* path = result == NSOKButton ? [[savePanel.URL filePathURL] path] : nil;
-			[aDelegate savePanelDidEnd:self path:path encoding:optionsViewController.encodingOptions];
-			[self release];
-		}];
-		[savePanel deselectExtension];
+		NSTextView* tw = (NSTextView*)savePanel.firstResponder;
+		NSRange extRange = [tw.textStorage.string rangeOfString:@"."];
+		if(extRange.location != NSNotFound)
+			[tw setSelectedRange:NSMakeRange(0, extRange.location)];
 	}
-	return self;
-}
-
-- (void)dealloc
-{
-	[optionsViewController release];
-	[super dealloc];
-}
-
-+ (void)showWithPath:(NSString*)aPathSuggestion directory:(NSString*)aDirectorySuggestion fowWindow:(NSWindow*)aWindow delegate:(id)aDelegate encoding:(encoding::type const&)encoding
-{
-	[[OakSavePanel alloc] initWithPath:aPathSuggestion directory:aDirectorySuggestion fowWindow:aWindow delegate:aDelegate encoding:encoding];
 }
 @end

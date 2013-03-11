@@ -76,7 +76,7 @@ static void cancel_backup (oak::uuid_t const& docId)
 static void perform_backup (oak::uuid_t const& docId)
 {
 	D(DBF_Document_Backup, bug("%s\n", to_s(docId).c_str()););
-	if(document::document_ptr document = document::find(docId, false))
+	if(document::document_ptr document = document::find(docId))
 		document->backup();
 	records.erase(docId);
 }
@@ -89,7 +89,7 @@ static void schedule_backup (oak::uuid_t const& docId)
 	CFAbsoluteTime backupAt = std::min(CFAbsoluteTimeGetCurrent() + 2, record.upper_limit);
 	if(!record.timer || record.backup_at < backupAt)
 	{
-		record.timer = cf::setup_timer(backupAt - CFAbsoluteTimeGetCurrent(), cf::create_callback(&perform_backup, docId));
+		record.timer = cf::setup_timer(backupAt - CFAbsoluteTimeGetCurrent(), std::bind(&perform_backup, docId));
 		record.backup_at = backupAt;
 	}
 }
@@ -288,7 +288,7 @@ namespace document
 			{
 				if(document_ptr doc = pair->second.lock())
 				{
-					if(doc->path() == NULL_STR)
+					if(doc->path() == NULL_STR && doc->custom_name() == NULL_STR)
 						reserved.insert(doc->untitled_count());
 				}
 			}
@@ -478,22 +478,6 @@ namespace document
 		return _backup_path;
 	}
 
-	bool is_binary (std::string const& path)
-	{
-		D(DBF_Document_Binary, bug("%s\n", path.c_str()););
-		if(path == NULL_STR)
-			return false;
-
-		settings_t const& settings = settings_for_path(path);
-		if(settings.has(kSettingsBinaryKey))
-		{
-			D(DBF_Document_Binary, bug(".tm_properties reports it as binary: %s\n", BSTR(path::glob_t(settings.get(kSettingsBinaryKey, "")).does_match(path))););
-			return path::glob_t(settings.get(kSettingsBinaryKey, "")).does_match(path);
-		}
-
-		return false;
-	}
-
 	std::string document_t::file_type () const
 	{
 		D(DBF_Document, bug("%s, %s\n", display_name().c_str(), _file_type.c_str()););
@@ -511,13 +495,6 @@ namespace document
 			map["TM_FILENAME"]  = path::name(path());
 			map["TM_DIRECTORY"] = path::parent(path());
 			map["PWD"]          = path::parent(path());
-
-			if(scm::info_ptr info = scm::info(path()))
-			{
-				std::string const& branch = info->branch();
-				if(branch != NULL_STR)
-					map["TM_SCM_BRANCH"] = branch;
-			}
 		}
 
 		return sourceFileSystem ? variables_for_path(path(), scope(), map) : map;
@@ -619,8 +596,13 @@ namespace document
 	{
 		if(success)
 		{
-			_key        = documents.update_path(shared_from_this(), _key, path::identifier_t(_path));
-			_is_on_disk = true;
+			_key = documents.update_path(shared_from_this(), _key, path::identifier_t(_path));
+
+			if(!_is_on_disk)
+			{
+				_is_on_disk = true;
+				broadcast(callback_t::did_change_on_disk_status);
+			}
 
 			_path_attributes = pathAttributes;
 
@@ -665,7 +647,10 @@ namespace document
 	{
 		struct save_callback_wrapper_t : file::save_callback_t
 		{
-			save_callback_wrapper_t (document::document_ptr doc, document::save_callback_ptr callback, bool close) : _document(doc), _callback(callback), _close(close) { }
+			save_callback_wrapper_t (document::document_ptr doc, document::save_callback_ptr callback) : _document(doc), _callback(callback)
+			{
+				_document->open();
+			}
 
 			void select_path (std::string const& path, io::bytes_ptr content, file::save_context_ptr context)                                     { _callback->select_path(path, content, context); }
 			void select_make_writable (std::string const& path, io::bytes_ptr content, file::save_context_ptr context)                            { _callback->select_make_writable(path, content, context); }
@@ -676,30 +661,23 @@ namespace document
 			{
 				_document->post_save(path, content, pathAttributes, encoding, success);
 				_callback->did_save_document(_document, path, success, message, filter);
-				if(_close)
-					_document->close();
+				_document->close();
 			}
 
 		private:
 			document::document_ptr _document;
 			document::save_callback_ptr _callback;
-			bool _close;
 		};
 
 		D(DBF_Document, bug("save ‘%s’\n", _path.c_str()););
 
-		bool closeAfterSave = false;
 		if(!is_open())
 		{
 			if(!_content && _backup_path == NULL_STR)
 				return callback->did_save(_path, io::bytes_ptr(), _path_attributes, encoding::type(_disk_newlines, _disk_encoding, _disk_bom), false, NULL_STR, oak::uuid_t());
-			open();
-			closeAfterSave = true;
 		}
 
 		_file_watcher.reset();
-
-		io::bytes_ptr bytes(new io::bytes_t(content()));
 
 		std::map<std::string, std::string> attributes;
 		if(volume::settings(_path).extended_attributes())
@@ -710,8 +688,10 @@ namespace document
 			attributes["com.macromates.folded"]         = _folded;
 		}
 
-		save_callback_wrapper_t* cb = new save_callback_wrapper_t(shared_from_this(), callback, closeAfterSave);
+		save_callback_wrapper_t* cb = new save_callback_wrapper_t(shared_from_this(), callback);
 		save_callback_ptr sharedPtr((save_callback_t*)cb);
+
+		io::bytes_ptr bytes(new io::bytes_t(content()));
 
 		encoding::type const encoding = encoding_for_save_as_path(_path);
 		file::save(_path, sharedPtr, _authorization, bytes, attributes, _file_type, encoding, std::vector<oak::uuid_t>() /* binary import filters */, std::vector<oak::uuid_t>() /* text import filters */);
@@ -759,7 +739,7 @@ namespace document
 			path::set_attr(dst, "com.macromates.backup.encoding",       _disk_encoding);
 			path::set_attr(dst, "com.macromates.backup.bom",            _disk_bom ? "YES" : "NO");
 			path::set_attr(dst, "com.macromates.backup.newlines",       _disk_newlines);
-			path::set_attr(dst, "com.macromates.backup.untitled-count", text::format("%zu", _untitled_count));
+			path::set_attr(dst, "com.macromates.backup.untitled-count", std::to_string(_untitled_count));
 			path::set_attr(dst, "com.macromates.backup.custom-name",    _custom_name);
 			path::set_attr(dst, "com.macromates.bookmarks",             marks_as_string());
 			path::set_attr(dst, "com.macromates.folded",                NULL_STR);
@@ -894,6 +874,10 @@ namespace document
 		_backup_path = NULL_STR;
 
 		check_modified(-1, -1);
+
+		if(_grammar)
+			_grammar->remove_callback(&_grammar_callback);
+		_grammar.reset();
 		_undo_manager.reset();
 		_buffer.reset();
 		_pristine_buffer = NULL_STR;
@@ -965,18 +949,22 @@ namespace document
 					else if(!_document->is_modified())
 					{
 						D(DBF_Document_WatchFS, bug("changed on disk and we have no local changes, so reverting to that\n"););
+						_document->undo_manager().begin_undo_group(ng::ranges_t(0));
 						_document->_buffer->replace(0, _document->_buffer->size(), yours);
 						_document->_buffer->bump_revision();
 						_document->check_modified(_document->_buffer->revision(), _document->_buffer->revision());
 						_document->mark_pristine();
+						_document->undo_manager().end_undo_group(ng::ranges_t(0));
 					}
 					else
 					{
 						bool conflict = false;
 						std::string const& merged = merge(_document->_pristine_buffer, mine, yours, &conflict);
 						D(DBF_Document_WatchFS, bug("changed on disk and we have local changes, merge conflict %s.\n%s\n", BSTR(conflict), merged.c_str()););
+						_document->undo_manager().begin_undo_group(ng::ranges_t(0));
 						_document->_buffer->replace(0, _document->_buffer->size(), merged);
 						_document->set_revision(_document->_buffer->bump_revision());
+						_document->undo_manager().end_undo_group(ng::ranges_t(0));
 						// TODO if there was a conflict, we shouldn’t take the merged content (but ask user what to do)
 						// TODO mark_pristine() but using ‘yours’
 					}
@@ -1239,16 +1227,19 @@ namespace document
 		return res;
 	}
 
-	scanner_t::scanner_t (std::string const& path, std::string const& glob, std::string const& excludeGlob, bool follow_links, bool follow_hidden_folders, bool depth_first) : path(path), glob(glob), exclude_glob(excludeGlob), follow_links(follow_links), follow_hidden_folders(follow_hidden_folders), depth_first(depth_first), is_running_flag(true), should_stop_flag(false)
+	scanner_t::scanner_t (std::string const& path, path::glob_list_t const& glob, bool follow_links, bool depth_first, bool includeUntitled) : path(path), glob(glob), follow_links(follow_links), depth_first(depth_first), is_running_flag(true), should_stop_flag(false)
 	{
-		D(DBF_Document_Scanner, bug("%s / %s (excl. %s), links %s, include hidden %s\n", path.c_str(), glob.c_str(), excludeGlob.c_str(), BSTR(follow_links), BSTR(follow_hidden_folders)););
+		D(DBF_Document_Scanner, bug("%s, links %s\n", path.c_str(), BSTR(follow_links)););
 
-		document_tracker_t::lock_t lock(&document::documents);
-		iterate(pair, document::documents.documents)
+		if(includeUntitled)
 		{
-			document_ptr doc = pair->second.lock();
-			if(doc && doc->path() == NULL_STR)
-				documents.push_back(doc);
+			document_tracker_t::lock_t lock(&document::documents);
+			iterate(pair, document::documents.documents)
+			{
+				document_ptr doc = pair->second.lock();
+				if(doc && doc->path() == NULL_STR)
+					documents.push_back(doc);
+			}
 		}
 
 		struct bootstrap_t { static void* main (void* arg) { ((scanner_t*)arg)->thread_main(); return NULL; } };
@@ -1294,7 +1285,6 @@ namespace document
 	{
 		D(DBF_Document_Scanner, bug("%s, running %s\n", initialPath.c_str(), BSTR(is_running_flag)););
 
-		path::glob_t ptrn(glob), exclPtrn(exclude_glob);
 		std::deque<std::string> dirs(1, initialPath);
 		std::vector<std::string> links;
 		while(!dirs.empty())
@@ -1320,12 +1310,9 @@ namespace document
 					break;
 
 				std::string const& path = path::join(dir, (*it)->d_name);
-				if(exclPtrn.does_match(path))
-					continue;
-
 				if((*it)->d_type == DT_DIR)
 				{
-					if((*it)->d_name[0] == '.' && !follow_hidden_folders)
+					if(glob.exclude(path, path::kPathItemDirectory))
 						continue;
 
 					if(seen_paths.insert(std::make_pair(buf.st_dev, (*it)->d_ino)).second)
@@ -1334,7 +1321,7 @@ namespace document
 				}
 				else if((*it)->d_type == DT_REG)
 				{
-					if(!ptrn.does_match(path))
+					if(glob.exclude(path, path::kPathItemFile))
 						continue;
 
 					if(seen_paths.insert(std::make_pair(buf.st_dev, (*it)->d_ino)).second)
@@ -1359,12 +1346,15 @@ namespace document
 					{
 						if(S_ISDIR(buf.st_mode) && follow_links && seen_paths.insert(std::make_pair(buf.st_dev, buf.st_ino)).second)
 						{
+							if(glob.exclude(path, path::kPathItemDirectory))
+								continue;
+
 							D(DBF_Document_Scanner, bug("follow link: %s → %s\n", link->c_str(), path.c_str()););
 							dirs.push_back(path);
 						}
 						else if(S_ISREG(buf.st_mode))
 						{
-							if(!ptrn.does_match(path::name(*link)))
+							if(glob.exclude(path, path::kPathItemFile))
 								continue;
 
 							if(seen_paths.insert(std::make_pair(buf.st_dev, buf.st_ino)).second)

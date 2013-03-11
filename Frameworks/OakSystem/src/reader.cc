@@ -31,9 +31,9 @@ namespace io
 		pthread_mutex_t data_received_mutex;
 	};
 
-	static reader_server_t& server ()
+	static reader_server_ptr server ()
 	{
-		static reader_server_t instance;
+		static reader_server_ptr instance(new reader_server_t);
 		return instance;
 	}
 
@@ -43,6 +43,7 @@ namespace io
 
 	reader_t::reader_t (int fd) : fd(-1)
 	{
+		reader_server = server();
 		if(fd != -1)
 			set_fd(fd);
 	}
@@ -50,16 +51,16 @@ namespace io
 	reader_t::~reader_t ()
 	{
 		if(fd != -1)
-			server().remove(fd, client_key);
+			reader_server->remove(fd, client_key);
 	}
 
 	void reader_t::set_fd (int fd)
 	{
 		if(this->fd != -1)
-			server().remove(this->fd, client_key);
+			reader_server->remove(this->fd, client_key);
 
 		this->fd = fd;
-		client_key = server().add(fd, this);
+		client_key = reader_server->add(fd, this);
 	}
 	
 	// ===================
@@ -73,7 +74,7 @@ namespace io
 		};
 
 		io::create_pipe(read_from_master, write_to_server, true);
-		run_loop_source = cf::create_callback(&reader_server_t::master_run, this);
+		run_loop_source = cf::create_callback(std::bind(&reader_server_t::master_run, this));
 
 		pthread_mutex_init(&data_received_mutex, NULL);
 		pthread_create(&server_thread, NULL, &runner_t::server, this);
